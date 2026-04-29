@@ -11,6 +11,7 @@ The old scripts had the right instincts, but too many things lived in one file:
 - public job URL construction
 - JSON-LD job detail scraping
 - employer-specific description cleanup
+- location/facet lookup
 - ranking logic
 - printing/exporting
 
@@ -24,6 +25,7 @@ workday_jobs/
   client.py      # Workday CXS list API + public JSON-LD hydration
   models.py      # JobPosting and RankedJob dataclasses
   parsing.py     # req_id/location/posted/JSON-LD/description cleanup
+  facets.py      # tenant-specific facet discovery/search, especially locations
   ranker.py      # keyword scoring profile
   exporters.py   # CSV/JSON output
   cli.py         # command-line wrapper
@@ -33,7 +35,9 @@ examples/
   run_nvidia.py
 tests/
   test_config.py
+  test_facets.py
   test_parsing.py
+  test_ranker.py
 ```
 
 ## Install
@@ -57,6 +61,32 @@ workday-jobs \
   --max-jobs 75 \
   --csv nvidia_ranked.csv
 ```
+
+## Location search instead of hardcoded location IDs
+
+Different Workday tenants expose location facets differently. NVIDIA may have a country-level `locationHierarchy1` value for the United States, while Cisco may expose many city-level `locations` values whose labels contain `(US)` or `US`.
+
+Use `--location` to resolve human text into whatever facet values that tenant exposes:
+
+```bash
+workday-jobs \
+  --url "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite" \
+  --location US \
+  --list-locations
+```
+
+Then run the actual scrape/rank with the resolved location applied:
+
+```bash
+workday-jobs \
+  --url "https://cisco.wd5.myworkdayjobs.com/en-US/Cisco_Careers" \
+  --location "Boston" \
+  --location-matches 3 \
+  --pages 5 \
+  --max-jobs 75
+```
+
+`--location-matches` matters because some tenants only have city-level values. For a broad query like `US`, a tenant with no country-level option may return many city values; for a focused query like `Boston`, one match is usually enough.
 
 ## Run from explicit config
 
@@ -93,13 +123,17 @@ Those become:
 
 Do **not** collapse those into one string containing `&jobFamilyGroup=`.
 
-### 3. Description cleanup has a safe fallback
+### 3. Location is now a search problem, not a hardcoded variable
+
+Use `--location US`, `--location Boston`, or `--location Massachusetts` and let the tenant-specific facet resolver find the correct Workday facet key/value pair.
+
+### 4. Description cleanup has a safe fallback
 
 The old version sometimes returned `None` when the employer did not use the exact expected heading. This version tries known headings, trims known boilerplate, but otherwise falls back to the full cleaned schema.org JobPosting description.
 
-### 4. Ranking is replaceable
+### 5. Ranking is replaceable
 
-`KeywordRanker` is intentionally simple. Later, it can be replaced or complemented by embeddings/LLM scoring without touching the Workday scraping layer.
+`KeywordRanker` is intentionally simple, but the default profile is now tuned toward Chris-style roles: quality engineering, test automation, Linux/Python, SRE/DevOps, Kubernetes/OpenShift, enterprise storage, network OS/networking, customer-facing solutions work, and technical leadership. Later, it can be replaced or complemented by embeddings/LLM scoring without touching the Workday scraping layer.
 
 ## Suggested next step
 
