@@ -8,6 +8,7 @@ from flask import Flask, render_template_string, request
 from .client import WorkdayClient
 from .config import WorkdaySiteConfig
 from .facets import FacetOption, merge_facets
+from .filtering import filter_jobs_by_locations
 from .models import RankedJob
 from .ranker import KeywordRanker
 
@@ -82,9 +83,10 @@ def run_search(form: SearchForm) -> dict[str, Any]:
     )
     client = WorkdayClient(config)
     runtime_facets = dict(config.default_facets)
+    location_queries = parse_location_queries(form.location)
 
     location_matches: dict[str, list[FacetOption]] = {}
-    for query in parse_location_queries(form.location):
+    for query in location_queries:
         matches = client.search_location_options(
             query,
             applied_facets=runtime_facets,
@@ -99,6 +101,9 @@ def run_search(form: SearchForm) -> dict[str, Any]:
             "runtime_facets": runtime_facets,
             "location_matches": location_matches,
             "ranked": [],
+            "raw_job_count": 0,
+            "filtered_job_count": 0,
+            "post_filter_applied": False,
         }
 
     jobs = client.discover_jobs(
@@ -108,12 +113,17 @@ def run_search(form: SearchForm) -> dict[str, Any]:
         hydrate=form.hydrate,
         applied_facets=runtime_facets,
     )
-    ranked = KeywordRanker().rank(jobs)[: form.top]
+    raw_job_count = len(jobs)
+    filtered_jobs = filter_jobs_by_locations(jobs, location_queries)
+    ranked = KeywordRanker().rank(filtered_jobs)[: form.top]
     return {
         "config": config,
         "runtime_facets": runtime_facets,
         "location_matches": location_matches,
         "ranked": ranked,
+        "raw_job_count": raw_job_count,
+        "filtered_job_count": len(filtered_jobs),
+        "post_filter_applied": bool(location_queries),
     }
 
 
@@ -189,6 +199,7 @@ PAGE_TEMPLATE = """
     .summary { padding: 16px; margin-bottom: 16px; }
     .summary code { color: #ffc18f; }
     .error { border-color: rgba(255,107,107,.5); color: #ffd3d3; padding: 16px; margin-bottom: 16px; }
+    .warning { border-color: rgba(255, 138, 61, .55); color: #ffd8bd; padding: 14px; margin-top: 12px; background: rgba(255, 138, 61, .08); }
     .results { display: grid; gap: 14px; }
     .job { padding: 16px; }
     .job-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -225,7 +236,7 @@ PAGE_TEMPLATE = """
 
         <label for="location">Location search</label>
         <textarea id="location" name="location" placeholder="US, Boston, Massachusetts">{{ form.location }}</textarea>
-        <div class="hint">Comma or newline separated. The app resolves these to the site's actual Workday location facet IDs.</div>
+        <div class="hint">Comma or newline separated. The app resolves these to the site's actual Workday location facet IDs, then post-filters returned jobs by visible/raw location text.</div>
 
         <label for="query">Keyword searchText sent to Workday</label>
         <input id="query" name="query" type="text" value="{{ form.query }}" placeholder="optional: SDET, Kubernetes, storage...">
@@ -277,6 +288,16 @@ PAGE_TEMPLATE = """
             <code>{{ result.config.tenant }}/{{ result.config.site }}</code><br>
             <strong>Applied facets:</strong>
             <code>{{ result.runtime_facets }}</code>
+            {% if result.post_filter_applied %}
+              <br><strong>Location post-filter:</strong>
+              kept <code>{{ result.filtered_job_count }}</code> of <code>{{ result.raw_job_count }}</code> returned jobs
+            {% endif %}
+
+            {% if result.post_filter_applied and result.raw_job_count > 0 and result.filtered_job_count == 0 %}
+              <div class="warning">
+                Workday returned jobs, but none matched the requested location text after post-filtering. Try increasing Pages/Max jobs, removing keyword searchText, or previewing locations to choose a different location value.
+              </div>
+            {% endif %}
 
             {% if result.location_matches %}
               <h3>Location matches</h3>
