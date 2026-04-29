@@ -6,6 +6,7 @@ from typing import Any, Iterable
 import requests
 
 from .config import WorkdaySiteConfig
+from .facets import FacetOption, merge_facets, search_facet_options
 from .models import JobPosting
 from .parsing import (
     build_public_job_url,
@@ -61,6 +62,57 @@ class WorkdayClient:
 
         response.raise_for_status()
         return response.json()
+
+    def fetch_facets(
+        self,
+        *,
+        applied_facets: dict[str, list[str]] | None = None,
+        search_text: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch one lightweight list page and return its facet metadata.
+
+        Workday exposes filter dropdown values in the same CXS jobs response used for
+        listing jobs. This lets us resolve human terms like "US" or "Boston" to the
+        tenant-specific facet IDs instead of hardcoding `locationHierarchy1` or
+        `locations` values per employer.
+        """
+        return self.post_jobs(
+            limit=1,
+            offset=0,
+            applied_facets=applied_facets if applied_facets is not None else self.config.default_facets,
+            search_text=search_text,
+        )
+
+    def search_location_options(
+        self,
+        query: str,
+        *,
+        applied_facets: dict[str, list[str]] | None = None,
+        limit: int = 10,
+    ) -> list[FacetOption]:
+        """Search tenant-specific location facet values by human text.
+
+        Examples: "US", "United States", "Boston", "Massachusetts", "RTP". The
+        returned options include the Workday facet key and ID needed for appliedFacets.
+        """
+        payload = self.fetch_facets(applied_facets=applied_facets)
+        return search_facet_options(payload, query, location_only=True, limit=limit)
+
+    def facets_for_location(
+        self,
+        query: str,
+        *,
+        applied_facets: dict[str, list[str]] | None = None,
+        max_matches: int = 1,
+    ) -> dict[str, list[str]]:
+        """Resolve a location query into an appliedFacets dict.
+
+        By default this chooses the single best match. Increase max_matches when a
+        provider only exposes cities and you intentionally want several matching
+        location values.
+        """
+        matches = self.search_location_options(query, applied_facets=applied_facets, limit=max_matches)
+        return merge_facets(*(match.as_facet_dict() for match in matches))
 
     def fetch_page(self, page: int = 1, *, limit: int | None = None, **kwargs: Any) -> dict[str, Any]:
         if page < 1:
