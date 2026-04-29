@@ -14,6 +14,7 @@ The old scripts had the right instincts, but too many things lived in one file:
 - location/facet lookup
 - ranking logic
 - printing/exporting
+- browser UI
 
 This project separates those concerns.
 
@@ -29,6 +30,7 @@ workday_jobs/
   ranker.py      # keyword scoring profile
   exporters.py   # CSV/JSON output
   cli.py         # command-line wrapper
+  web.py         # local Flask browser UI
 examples/
   run_cisco.py
   run_draper.py
@@ -50,9 +52,31 @@ python -m venv .venv
 pip install -e .
 ```
 
+On Windows PowerShell, activation is usually:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+## Run the browser UI
+
+After installing, start the local web app:
+
+```bash
+workday-jobs-web
+```
+
+Then open this in your browser:
+
+```text
+http://127.0.0.1:5000
+```
+
+The browser UI lets you paste a Workday careers URL, search for locations like `US`, `Boston`, or `Massachusetts`, preview matched location facets, and rank jobs without typing the full CLI command.
+
 ## Run from a public Workday URL
 
-This is the easiest path. Facets in the URL query string are reused automatically.
+This is the easiest CLI path. Facets in the URL query string are reused automatically.
 
 ```bash
 workday-jobs \
