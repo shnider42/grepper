@@ -7,6 +7,7 @@ from pathlib import Path
 from .client import WorkdayClient
 from .config import WorkdaySiteConfig, facets_from_query
 from .exporters import write_ranked_csv, write_ranked_json
+from .facets import merge_facets
 from .ranker import KeywordRanker
 
 
@@ -29,6 +30,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--locale", default="en-US")
     parser.add_argument("--facet", action="append", help="Applied facet as key=value. Repeat for multiple values.")
     parser.add_argument("--query", default="", help="Workday searchText value.")
+    parser.add_argument(
+        "--location",
+        action="append",
+        help=(
+            "Human location search, resolved against the tenant's location facets "
+            "(examples: US, Boston, Massachusetts). Repeat to OR multiple matches."
+        ),
+    )
+    parser.add_argument(
+        "--location-matches",
+        type=int,
+        default=1,
+        help="Number of matching Workday location facet values to apply for each --location.",
+    )
+    parser.add_argument(
+        "--list-locations",
+        action="store_true",
+        help="Resolve --location terms and print matching facet values without scraping jobs.",
+    )
     parser.add_argument("--pages", type=int, default=3, help="Max pages to fetch.")
     parser.add_argument("--page-size", type=int, default=20, help="Jobs per Workday list request.")
     parser.add_argument("--max-jobs", type=int, default=50, help="Max jobs to hydrate/rank.")
@@ -79,12 +99,44 @@ def main(argv: list[str] | None = None) -> int:
     config = config_from_args(args)
 
     client = WorkdayClient(config)
+    runtime_facets = dict(config.default_facets)
+
+    if args.location:
+        resolved_location_facets: dict[str, list[str]] = {}
+        for location_query in args.location:
+            matches = client.search_location_options(
+                location_query,
+                applied_facets=runtime_facets,
+                limit=max(args.location_matches, 1),
+            )
+            if not matches:
+                print(f"No Workday location facet match found for: {location_query!r}")
+                continue
+
+            print(f"Location matches for {location_query!r}:")
+            for match in matches:
+                print(
+                    f"  {match.facet_key}={match.value}  "
+                    f"{match.label}  score={match.score}  count={match.count}"
+                )
+
+            resolved_location_facets = merge_facets(
+                resolved_location_facets,
+                *(match.as_facet_dict() for match in matches[: args.location_matches]),
+            )
+
+        runtime_facets = merge_facets(runtime_facets, resolved_location_facets)
+
+    if args.list_locations:
+        return 0
+
     jobs = client.discover_jobs(
         max_pages=args.pages,
         limit=args.page_size,
         max_jobs=args.max_jobs,
         hydrate=not args.no_hydrate,
         sleep_seconds=args.sleep,
+        applied_facets=runtime_facets,
     )
     ranked = KeywordRanker().rank(jobs)
 
