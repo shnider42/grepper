@@ -8,7 +8,7 @@ config = WorkdaySiteConfig.from_public_url(
 )
 
 client = WorkdayClient(config)
-jobs = client.discover_jobs(max_pages=5, max_jobs=100, hydrate=True)
+jobs = client.discover_jobs(max_pages=5, max_jobs=25, hydrate=True)
 ranked = KeywordRanker().rank(jobs)
 
 for item in ranked[:25]:
