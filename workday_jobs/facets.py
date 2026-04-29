@@ -43,6 +43,25 @@ US_STATE_ALIASES: dict[str, tuple[str, ...]] = {
     "washington": ("wa", "washington"),
 }
 
+COUNTRY_ONLY_LABELS = {
+    "us",
+    "usa",
+    "u s",
+    "u s a",
+    "united states",
+    "united states of america",
+    "uk",
+    "u k",
+    "united kingdom",
+    "canada",
+}
+
+COUNTRY_QUERY_TERMS = {
+    alias
+    for aliases in COUNTRY_ALIASES.values()
+    for alias in aliases
+} | set(COUNTRY_ALIASES.keys())
+
 
 @dataclass(frozen=True)
 class FacetOption:
@@ -71,6 +90,16 @@ def normalize_for_match(text: str | None) -> str:
     text = text.replace("&", " and ")
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def is_country_query(query: str) -> bool:
+    normalized = normalize_for_match(query)
+    normalized_country_terms = {normalize_for_match(term) for term in COUNTRY_QUERY_TERMS}
+    return normalized in normalized_country_terms
+
+
+def is_country_only_label(label: str) -> bool:
+    return normalize_for_match(label) in COUNTRY_ONLY_LABELS
 
 
 def aliases_for_query(query: str) -> set[str]:
@@ -168,8 +197,13 @@ def score_facet_option(option: FacetOption, query: str) -> float:
 
     label = normalize_for_match(option.label)
     path = normalize_for_match(" ".join(option.path))
-    score = 0.0
 
+    # A broad country query like "US" should not select an arbitrary high-count city
+    # like "San Jose, California, US". Only exact country-level labels are accepted.
+    if is_country_query(query) and not is_country_only_label(option.label):
+        return 0.0
+
+    score = 0.0
     for alias in aliases:
         if label == alias:
             score = max(score, 100.0)
@@ -182,11 +216,8 @@ def score_facet_option(option: FacetOption, query: str) -> float:
         elif alias and alias in path:
             score = max(score, 45.0)
 
-    if normalize_for_match(query) in {"us", "usa", "united states"}:
-        if label in {"united states", "united states of america", "usa", "us"}:
-            score += 20.0
-        elif label.endswith(" us") or " united states " in f" {label} ":
-            score += 5.0
+    if is_country_query(query) and is_country_only_label(option.label):
+        score += 20.0
 
     if option.count is not None:
         score += min(option.count / 1000.0, 3.0)
