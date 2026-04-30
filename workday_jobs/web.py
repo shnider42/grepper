@@ -8,8 +8,9 @@ from flask import Flask, render_template_string, request
 from .client import WorkdayClient
 from .config import WorkdaySiteConfig
 from .facets import FacetOption, merge_facets
-from .filtering import filter_jobs_by_locations
-from .models import RankedJob
+from .filtering import filter_jobs_by_locations, job_matches_location
+from .models import JobPosting, RankedJob
+from .parsing import build_public_job_url, compact_location, compact_posted_on, parse_req_id_from_path
 from .ranker import KeywordRanker
 
 
@@ -25,7 +26,7 @@ class SearchForm:
     url: str = DEFAULT_EXAMPLES["Cisco"]
     location: str = ""
     query: str = ""
-    pages: int = 3
+    pages: int = 10
     page_size: int = 20
     max_jobs: int = 50
     top: int = 25
@@ -60,7 +61,7 @@ def form_from_request() -> SearchForm:
         url=(request.form.get("url") or "").strip(),
         location=(request.form.get("location") or "").strip(),
         query=(request.form.get("query") or "").strip(),
-        pages=_safe_int(request.form.get("pages"), 3, minimum=1, maximum=25),
+        pages=_safe_int(request.form.get("pages"), 10, minimum=1, maximum=100),
         page_size=_safe_int(request.form.get("page_size"), 20, minimum=1, maximum=100),
         max_jobs=_safe_int(request.form.get("max_jobs"), 50, minimum=1, maximum=500),
         top=_safe_int(request.form.get("top"), 25, minimum=1, maximum=100),
@@ -68,6 +69,62 @@ def form_from_request() -> SearchForm:
         hydrate=request.form.get("hydrate") == "on",
         action=request.form.get("action") or "rank",
     )
+
+
+def lightweight_job_from_summary(client: WorkdayClient, summary: dict[str, Any]) -> JobPosting:
+    external_path = summary.get("externalPath") or summary.get("externalPathAndQuery") or ""
+    url = build_public_job_url(
+        client.config.base_url,
+        client.config.site,
+        str(external_path),
+        locale=client.config.locale,
+    )
+    return JobPosting(
+        source=client.config.site,
+        req_id=parse_req_id_from_path(str(external_path)),
+        title=str(summary.get("title") or summary.get("titleSimple") or ""),
+        location=compact_location(summary),
+        posted=compact_posted_on(summary),
+        url=url,
+        job_id=str(summary.get("id") or summary.get("jobId") or summary.get("uid") or ""),
+        raw_summary=summary,
+    )
+
+
+def discover_location_filtered_jobs(
+    client: WorkdayClient,
+    *,
+    location_queries: list[str],
+    applied_facets: dict[str, list[str]],
+    max_pages: int,
+    page_size: int,
+    max_jobs: int,
+    hydrate: bool,
+) -> tuple[list[JobPosting], int]:
+    """Scan cheap list summaries first, then hydrate only location-matching jobs.
+
+    Some Workday tenants expose a location facet that is useful for discovery but is not
+    reliably honored by the jobs endpoint. Filtering before hydration keeps these scans
+    fast enough to search deeper pages without fetching every noisy job detail page.
+    """
+    matched_summaries: list[dict[str, Any]] = []
+    scanned = 0
+
+    for summary in client.iter_summaries(
+        max_pages=max_pages,
+        limit=page_size,
+        applied_facets=applied_facets,
+    ):
+        scanned += 1
+        lightweight_job = lightweight_job_from_summary(client, summary)
+        if any(job_matches_location(lightweight_job, query) for query in location_queries):
+            matched_summaries.append(summary)
+            if len(matched_summaries) >= max_jobs:
+                break
+
+    if hydrate:
+        return [client.hydrate_posting(summary) for summary in matched_summaries], scanned
+    return [lightweight_job_from_summary(client, summary) for summary in matched_summaries], scanned
 
 
 def run_search(form: SearchForm) -> dict[str, Any]:
@@ -106,15 +163,29 @@ def run_search(form: SearchForm) -> dict[str, Any]:
             "post_filter_applied": False,
         }
 
-    jobs = client.discover_jobs(
-        max_pages=form.pages,
-        limit=form.page_size,
-        max_jobs=form.max_jobs,
-        hydrate=form.hydrate,
-        applied_facets=runtime_facets,
-    )
-    raw_job_count = len(jobs)
-    filtered_jobs = filter_jobs_by_locations(jobs, location_queries)
+    if location_queries:
+        jobs, scanned_count = discover_location_filtered_jobs(
+            client,
+            location_queries=location_queries,
+            applied_facets=runtime_facets,
+            max_pages=form.pages,
+            page_size=form.page_size,
+            max_jobs=form.max_jobs,
+            hydrate=form.hydrate,
+        )
+        raw_job_count = scanned_count
+        filtered_jobs = jobs
+    else:
+        jobs = client.discover_jobs(
+            max_pages=form.pages,
+            limit=form.page_size,
+            max_jobs=form.max_jobs,
+            hydrate=form.hydrate,
+            applied_facets=runtime_facets,
+        )
+        raw_job_count = len(jobs)
+        filtered_jobs = filter_jobs_by_locations(jobs, location_queries)
+
     ranked = KeywordRanker().rank(filtered_jobs)[: form.top]
     return {
         "config": config,
@@ -236,15 +307,15 @@ PAGE_TEMPLATE = """
 
         <label for="location">Location search</label>
         <textarea id="location" name="location" placeholder="US, Boston, Massachusetts">{{ form.location }}</textarea>
-        <div class="hint">Comma or newline separated. The app resolves these to the site's actual Workday location facet IDs, then post-filters returned jobs by visible/raw location text.</div>
+        <div class="hint">Comma or newline separated. The app resolves these to the site's actual Workday location facet IDs, scans list-page summaries, then hydrates only matching jobs.</div>
 
         <label for="query">Keyword searchText sent to Workday</label>
         <input id="query" name="query" type="text" value="{{ form.query }}" placeholder="optional: SDET, Kubernetes, storage...">
 
         <div class="row">
           <div>
-            <label for="pages">Pages</label>
-            <input id="pages" name="pages" type="number" value="{{ form.pages }}" min="1" max="25">
+            <label for="pages">Pages to scan</label>
+            <input id="pages" name="pages" type="number" value="{{ form.pages }}" min="1" max="100">
           </div>
           <div>
             <label for="page_size">Page size</label>
@@ -254,7 +325,7 @@ PAGE_TEMPLATE = """
 
         <div class="row">
           <div>
-            <label for="max_jobs">Max jobs</label>
+            <label for="max_jobs">Max matching jobs</label>
             <input id="max_jobs" name="max_jobs" type="number" value="{{ form.max_jobs }}" min="1" max="500">
           </div>
           <div>
@@ -268,7 +339,7 @@ PAGE_TEMPLATE = """
 
         <label class="check">
           <input name="hydrate" type="checkbox" {% if form.hydrate %}checked{% endif %}>
-          Hydrate job detail pages for better description-based ranking
+          Hydrate matching job detail pages for better description-based ranking
         </label>
 
         <div class="actions">
@@ -289,13 +360,13 @@ PAGE_TEMPLATE = """
             <strong>Applied facets:</strong>
             <code>{{ result.runtime_facets }}</code>
             {% if result.post_filter_applied %}
-              <br><strong>Location post-filter:</strong>
-              kept <code>{{ result.filtered_job_count }}</code> of <code>{{ result.raw_job_count }}</code> returned jobs
+              <br><strong>Location scan:</strong>
+              kept <code>{{ result.filtered_job_count }}</code> matching jobs from <code>{{ result.raw_job_count }}</code> scanned summaries
             {% endif %}
 
             {% if result.post_filter_applied and result.raw_job_count > 0 and result.filtered_job_count == 0 %}
               <div class="warning">
-                Workday returned jobs, but none matched the requested location text after post-filtering. Try increasing Pages/Max jobs, removing keyword searchText, or previewing locations to choose a different location value.
+                Workday returned/scanned jobs, but none matched the requested location text. Try increasing Pages to scan, removing keyword searchText, or previewing locations to choose a different location value.
               </div>
             {% endif %}
 
