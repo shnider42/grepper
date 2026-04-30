@@ -7,9 +7,9 @@ from flask import Flask, render_template_string, request
 
 from .client import WorkdayClient
 from .config import WorkdaySiteConfig
-from .facets import FacetOption, merge_facets
-from .filtering import filter_jobs_by_locations, job_matches_location
-from .models import JobPosting, RankedJob
+from .facets import FacetOption, merge_facets, normalize_for_match
+from .filtering import job_matches_location
+from .models import JobPosting
 from .parsing import build_public_job_url, compact_location, compact_posted_on, parse_req_id_from_path
 from .ranker import KeywordRanker
 
@@ -26,6 +26,7 @@ class SearchForm:
     url: str = DEFAULT_EXAMPLES["Cisco"]
     location: str = ""
     query: str = ""
+    title_keywords: str = ""
     pages: int = 10
     page_size: int = 20
     max_jobs: int = 50
@@ -35,14 +36,30 @@ class SearchForm:
     action: str = "rank"
 
 
-def parse_location_queries(raw: str) -> list[str]:
-    """Accept comma/newline separated location searches from the browser form."""
-    queries: list[str] = []
+def parse_terms(raw: str) -> list[str]:
+    """Accept comma/newline separated form values."""
+    terms: list[str] = []
     for chunk in raw.replace("\n", ",").split(","):
         value = chunk.strip()
         if value:
-            queries.append(value)
-    return queries
+            terms.append(value)
+    return terms
+
+
+def parse_location_queries(raw: str) -> list[str]:
+    return parse_terms(raw)
+
+
+def parse_title_keywords(raw: str) -> list[str]:
+    return parse_terms(raw)
+
+
+def title_matches_keywords(title: str, keywords: list[str]) -> bool:
+    """Return True when no title filter exists, or any keyword/phrase is in the title."""
+    if not keywords:
+        return True
+    normalized_title = normalize_for_match(title)
+    return any(normalize_for_match(keyword) in normalized_title for keyword in keywords)
 
 
 def _safe_int(value: str | None, default: int, *, minimum: int = 1, maximum: int = 500) -> int:
@@ -61,6 +78,7 @@ def form_from_request() -> SearchForm:
         url=(request.form.get("url") or "").strip(),
         location=(request.form.get("location") or "").strip(),
         query=(request.form.get("query") or "").strip(),
+        title_keywords=(request.form.get("title_keywords") or "").strip(),
         pages=_safe_int(request.form.get("pages"), 10, minimum=1, maximum=100),
         page_size=_safe_int(request.form.get("page_size"), 20, minimum=1, maximum=100),
         max_jobs=_safe_int(request.form.get("max_jobs"), 50, minimum=1, maximum=500),
@@ -91,21 +109,34 @@ def lightweight_job_from_summary(client: WorkdayClient, summary: dict[str, Any])
     )
 
 
-def discover_location_filtered_jobs(
+def job_matches_browser_filters(
+    job: JobPosting,
+    *,
+    location_queries: list[str],
+    title_keywords: list[str],
+) -> bool:
+    if not title_matches_keywords(job.title, title_keywords):
+        return False
+    if location_queries and not any(job_matches_location(job, query) for query in location_queries):
+        return False
+    return True
+
+
+def discover_filtered_jobs(
     client: WorkdayClient,
     *,
     location_queries: list[str],
+    title_keywords: list[str],
     applied_facets: dict[str, list[str]],
     max_pages: int,
     page_size: int,
     max_jobs: int,
     hydrate: bool,
 ) -> tuple[list[JobPosting], int]:
-    """Scan cheap list summaries first, then hydrate only location-matching jobs.
+    """Scan cheap list summaries first, then hydrate only browser-filtered jobs.
 
-    Some Workday tenants expose a location facet that is useful for discovery but is not
-    reliably honored by the jobs endpoint. Filtering before hydration keeps these scans
-    fast enough to search deeper pages without fetching every noisy job detail page.
+    Workday's own searchText searches broadly across postings. This browser layer lets
+    title keywords mean exactly title keywords and avoids hydrating irrelevant postings.
     """
     matched_summaries: list[dict[str, Any]] = []
     scanned = 0
@@ -117,7 +148,11 @@ def discover_location_filtered_jobs(
     ):
         scanned += 1
         lightweight_job = lightweight_job_from_summary(client, summary)
-        if any(job_matches_location(lightweight_job, query) for query in location_queries):
+        if job_matches_browser_filters(
+            lightweight_job,
+            location_queries=location_queries,
+            title_keywords=title_keywords,
+        ):
             matched_summaries.append(summary)
             if len(matched_summaries) >= max_jobs:
                 break
@@ -141,6 +176,7 @@ def run_search(form: SearchForm) -> dict[str, Any]:
     client = WorkdayClient(config)
     runtime_facets = dict(config.default_facets)
     location_queries = parse_location_queries(form.location)
+    title_keywords = parse_title_keywords(form.title_keywords)
 
     location_matches: dict[str, list[FacetOption]] = {}
     for query in location_queries:
@@ -160,13 +196,16 @@ def run_search(form: SearchForm) -> dict[str, Any]:
             "ranked": [],
             "raw_job_count": 0,
             "filtered_job_count": 0,
-            "post_filter_applied": False,
+            "browser_filter_applied": False,
+            "title_keywords": title_keywords,
         }
 
-    if location_queries:
-        jobs, scanned_count = discover_location_filtered_jobs(
+    browser_filters_active = bool(location_queries or title_keywords)
+    if browser_filters_active:
+        filtered_jobs, scanned_count = discover_filtered_jobs(
             client,
             location_queries=location_queries,
+            title_keywords=title_keywords,
             applied_facets=runtime_facets,
             max_pages=form.pages,
             page_size=form.page_size,
@@ -174,17 +213,15 @@ def run_search(form: SearchForm) -> dict[str, Any]:
             hydrate=form.hydrate,
         )
         raw_job_count = scanned_count
-        filtered_jobs = jobs
     else:
-        jobs = client.discover_jobs(
+        filtered_jobs = client.discover_jobs(
             max_pages=form.pages,
             limit=form.page_size,
             max_jobs=form.max_jobs,
             hydrate=form.hydrate,
             applied_facets=runtime_facets,
         )
-        raw_job_count = len(jobs)
-        filtered_jobs = filter_jobs_by_locations(jobs, location_queries)
+        raw_job_count = len(filtered_jobs)
 
     ranked = KeywordRanker().rank(filtered_jobs)[: form.top]
     return {
@@ -194,7 +231,8 @@ def run_search(form: SearchForm) -> dict[str, Any]:
         "ranked": ranked,
         "raw_job_count": raw_job_count,
         "filtered_job_count": len(filtered_jobs),
-        "post_filter_applied": bool(location_queries),
+        "browser_filter_applied": browser_filters_active,
+        "title_keywords": title_keywords,
     }
 
 
@@ -292,7 +330,7 @@ PAGE_TEMPLATE = """
   <main class="page">
     <section class="hero">
       <h1>Grepper Workday Ranker</h1>
-      <p>Search a Workday-powered careers site, resolve messy tenant-specific location facets, and rank jobs against the current Chris-tuned profile.</p>
+      <p>Search a Workday-powered careers site, resolve tenant-specific location facets, filter title keywords, and rank jobs against the current Chris-tuned profile.</p>
     </section>
 
     <div class="layout">
@@ -307,10 +345,15 @@ PAGE_TEMPLATE = """
 
         <label for="location">Location search</label>
         <textarea id="location" name="location" placeholder="US, Boston, Massachusetts">{{ form.location }}</textarea>
-        <div class="hint">Comma or newline separated. The app resolves these to the site's actual Workday location facet IDs, scans list-page summaries, then hydrates only matching jobs.</div>
+        <div class="hint">Comma or newline separated. The app resolves these to the site's actual Workday location facet IDs.</div>
+
+        <label for="title_keywords">Title keywords</label>
+        <input id="title_keywords" name="title_keywords" type="text" value="{{ form.title_keywords }}" placeholder="optional: solutions, SDET, quality, site reliability">
+        <div class="hint">Browser-side filter. Comma separated terms match against the role title only.</div>
 
         <label for="query">Keyword searchText sent to Workday</label>
-        <input id="query" name="query" type="text" value="{{ form.query }}" placeholder="optional: SDET, Kubernetes, storage...">
+        <input id="query" name="query" type="text" value="{{ form.query }}" placeholder="optional: Kubernetes, storage, automation...">
+        <div class="hint">This is Workday's broader searchText and may search title, description, team, and other fields.</div>
 
         <div class="row">
           <div>
@@ -359,14 +402,18 @@ PAGE_TEMPLATE = """
             <code>{{ result.config.tenant }}/{{ result.config.site }}</code><br>
             <strong>Applied facets:</strong>
             <code>{{ result.runtime_facets }}</code>
-            {% if result.post_filter_applied %}
-              <br><strong>Location scan:</strong>
+            {% if result.title_keywords %}
+              <br><strong>Title keywords:</strong>
+              <code>{{ result.title_keywords }}</code>
+            {% endif %}
+            {% if result.browser_filter_applied %}
+              <br><strong>Browser-side scan:</strong>
               kept <code>{{ result.filtered_job_count }}</code> matching jobs from <code>{{ result.raw_job_count }}</code> scanned summaries
             {% endif %}
 
-            {% if result.post_filter_applied and result.raw_job_count > 0 and result.filtered_job_count == 0 %}
+            {% if result.browser_filter_applied and result.raw_job_count > 0 and result.filtered_job_count == 0 %}
               <div class="warning">
-                Workday returned/scanned jobs, but none matched the requested location text. Try increasing Pages to scan, removing keyword searchText, or previewing locations to choose a different location value.
+                Workday returned/scanned jobs, but none matched the requested browser-side filters. Try increasing Pages to scan, removing Workday searchText, or broadening the title/location filters.
               </div>
             {% endif %}
 
