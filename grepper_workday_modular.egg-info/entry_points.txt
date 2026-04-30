@@ -1,0 +1,3 @@
+[console_scripts]
+workday-jobs = workday_jobs.cli:main
+workday-jobs-web = workday_jobs.web:main

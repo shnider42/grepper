@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: grepper-workday-modular
+Version: 0.1.0
+Summary: Reusable Workday jobs scraper, normalizer, cleaner, and ranker.
+Requires-Python: >=3.10
+Requires-Dist: flask>=3.0.0
+Requires-Dist: requests>=2.31.0
