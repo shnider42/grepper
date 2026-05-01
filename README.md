@@ -60,6 +60,10 @@ On Windows PowerShell, activation is usually:
 .\.venv\Scripts\Activate.ps1
 ```
 
+### Local development in PyCharm
+
+When running locally, this project is usually run through JetBrains PyCharm 2025. Once PyCharm is pointed at the project interpreter / virtual environment, you should not need to manually run the environment activation command every time. The shell activation steps above are mainly for a fresh terminal, first-time setup, or running outside PyCharm.
+
 ## Run the browser UI
 
 After installing, start the local web app:
