@@ -95,12 +95,7 @@ class WorkdayClient:
         query = self.config.default_search_text if search_text is None else search_text
         response = self.session.get(
             NETFLIX_API_URL,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Grepper jobs research tool)",
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Referer": NETFLIX_CAREERS_URL,
-            },
+            headers=self._netflix_headers(),
             params={
                 "domain": "netflix.com",
                 "query": query,
@@ -132,6 +127,14 @@ class WorkdayClient:
             "raw": data,
         }
 
+    def _netflix_headers(self) -> dict[str, str]:
+        return {
+            "User-Agent": "Mozilla/5.0 (Grepper jobs research tool)",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": NETFLIX_CAREERS_URL,
+        }
+
     def _netflix_summary_from_position(self, position: dict[str, Any]) -> dict[str, Any]:
         job_id = str(position.get("id") or position.get("external_id") or "")
         locations = position.get("locations") or position.get("location") or []
@@ -149,7 +152,7 @@ class WorkdayClient:
             or position.get("url")
             or (f"{NETFLIX_CAREERS_URL}/job/{job_id}" if job_id else NETFLIX_CAREERS_URL)
         )
-        description_html = str(position.get("description") or position.get("job_description") or "")
+        description_html = _extract_netflix_description(position)
 
         return {
             "id": job_id,
@@ -166,6 +169,25 @@ class WorkdayClient:
             "description_text": clean_description(description_html),
             "raw_position": position,
         }
+
+    def _fetch_netflix_job_detail(self, job_id: str) -> dict[str, Any]:
+        if not job_id:
+            return {}
+
+        response = self.session.get(
+            f"{NETFLIX_API_URL}/{job_id}",
+            headers=self._netflix_headers(),
+            params={"domain": "netflix.com"},
+            timeout=self.config.timeout_seconds,
+        )
+        if response.status_code == 404:
+            return {}
+        response.raise_for_status()
+        try:
+            data = response.json()
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
 
     def fetch_facets(
         self,
@@ -328,7 +350,16 @@ class WorkdayClient:
         )
 
         if self.is_netflix_vanity_site:
-            description_html = summary.get("description_html")
+            job_id = str(summary.get("id") or summary.get("jobId") or summary.get("uid") or "")
+            description_html = summary.get("description_html") or ""
+            detail_payload: dict[str, Any] = {}
+            if not clean_description(description_html):
+                try:
+                    detail_payload = self._fetch_netflix_job_detail(job_id)
+                except requests.RequestException:
+                    detail_payload = {}
+                description_html = _extract_netflix_description(detail_payload) or description_html
+
             description_text = str(summary.get("description_text") or clean_description(description_html))
             return JobPosting(
                 source="Netflix",
@@ -337,13 +368,13 @@ class WorkdayClient:
                 location=compact_location(summary),
                 posted=compact_posted_on(summary),
                 url=url,
-                job_id=str(summary.get("id") or summary.get("jobId") or summary.get("uid") or ""),
+                job_id=job_id,
                 date_posted=summary.get("datePosted"),
                 hiring_organization="Netflix",
-                description_html=description_html,
+                description_html=description_html or None,
                 description_text=description_text,
                 raw_summary=summary,
-                raw_json_ld={},
+                raw_json_ld=detail_payload,
             )
 
         json_ld = self.fetch_json_ld(url)
@@ -425,6 +456,32 @@ class WorkdayClient:
             if max_jobs is not None and len(jobs) >= max_jobs:
                 break
         return jobs
+
+
+def _extract_netflix_description(payload: dict[str, Any]) -> str:
+    for key in ("job_description", "description", "description_html"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+
+    for container_key in ("position", "job", "data", "details"):
+        container = payload.get(container_key)
+        if isinstance(container, dict):
+            value = _extract_netflix_description(container)
+            if value:
+                return value
+
+    # Some API responses tuck custom fields under nested objects. Keep this narrow
+    # enough to avoid accidentally treating unrelated metadata as a description.
+    custom = payload.get("custom_JD")
+    if isinstance(custom, dict):
+        data_fields = custom.get("data_fields")
+        if isinstance(data_fields, dict):
+            value = _extract_netflix_description(data_fields)
+            if value:
+                return value
+
+    return ""
 
 
 def _format_netflix_posted(raw: Any) -> str:
