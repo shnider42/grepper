@@ -1,14 +1,43 @@
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass, field
-from typing import Iterable
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Iterable
 
 from .models import JobPosting, RankedJob
 
 
+def _coerce_weight_table(raw: object, field_name: str) -> dict[str, float]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"Profile field {field_name!r} must be an object mapping terms to weights")
+
+    table: dict[str, float] = {}
+    for term, weight in raw.items():
+        if not isinstance(term, str) or not term.strip():
+            raise ValueError(f"Profile field {field_name!r} contains an invalid term: {term!r}")
+        try:
+            table[term.casefold()] = float(weight)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Profile field {field_name!r} contains a non-numeric weight for {term!r}: {weight!r}"
+            ) from exc
+    return table
+
+
 @dataclass
-class KeywordProfile:
+class Profile:
+    """Weighted keyword settings used to rank job postings.
+
+    A Profile is the reusable matching personality for a search. It groups strong
+    positive terms, softer positive terms, and light negative terms, plus a few
+    scoring knobs that control title and description behavior.
+    """
+
+    name: str = "default"
     core_plus: dict[str, float] = field(default_factory=dict)
     nice: dict[str, float] = field(default_factory=dict)
     light_neg: dict[str, float] = field(default_factory=dict)
@@ -16,10 +45,39 @@ class KeywordProfile:
     length_bonus_cap: float = 1.25
     length_bonus_divisor: float = 900.0
 
-    def override(self, weights: dict[str, float] | None) -> "KeywordProfile":
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Profile":
+        if not isinstance(data, dict):
+            raise ValueError("Profile JSON must be an object")
+
+        return cls(
+            name=str(data.get("name") or "custom"),
+            core_plus=_coerce_weight_table(data.get("core_plus"), "core_plus"),
+            nice=_coerce_weight_table(data.get("nice"), "nice"),
+            light_neg=_coerce_weight_table(data.get("light_neg"), "light_neg"),
+            title_boost=float(data.get("title_boost", cls.title_boost)),
+            length_bonus_cap=float(data.get("length_bonus_cap", cls.length_bonus_cap)),
+            length_bonus_divisor=float(data.get("length_bonus_divisor", cls.length_bonus_divisor)),
+        )
+
+    @classmethod
+    def from_json_file(cls, path: str | Path) -> "Profile":
+        with Path(path).open("r", encoding="utf-8") as handle:
+            return cls.from_dict(json.load(handle))
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def override(self, weights: dict[str, float] | None) -> "Profile":
+        """Return a copy with term-level weight overrides applied.
+
+        Existing terms keep their bucket. New positive weights are added to
+        ``nice`` by default; new negative weights are added to ``light_neg``.
+        """
         if not weights:
             return self
-        profile = KeywordProfile(
+        profile = Profile(
+            name=self.name,
             core_plus=dict(self.core_plus),
             nice=dict(self.nice),
             light_neg=dict(self.light_neg),
@@ -35,19 +93,30 @@ class KeywordProfile:
                 profile.nice[key] = weight
             elif key in profile.light_neg:
                 profile.light_neg[key] = weight
+            elif weight < 0:
+                profile.light_neg[key] = weight
             else:
                 profile.nice[key] = weight
         return profile
 
 
-def default_profile() -> KeywordProfile:
+# Backward-compatible name for older imports.
+KeywordProfile = Profile
+
+
+def load_profile(path: str | Path | None = None) -> Profile:
+    return Profile.from_json_file(path) if path else default_profile()
+
+
+def default_profile() -> Profile:
     """Default ranking profile tuned for Chris's background.
 
     The intent is not to perfectly classify every job. It is to push the first page
     toward roles that combine quality engineering, automation, systems/SRE, Linux,
     networking/storage, customer-facing problem solving, and technical leadership.
     """
-    return KeywordProfile(
+    return Profile(
+        name="chris-default",
         core_plus={
             "quality engineering": 3.4,
             "quality engineer": 3.0,
@@ -208,7 +277,7 @@ def default_profile() -> KeywordProfile:
 
 
 class KeywordRanker:
-    def __init__(self, profile: KeywordProfile | None = None) -> None:
+    def __init__(self, profile: Profile | None = None) -> None:
         self.profile = profile or default_profile()
 
     @staticmethod
@@ -278,7 +347,7 @@ class KeywordRanker:
                     score=round(score, 3),
                     job=job,
                     matches=matches,
-                    notes=f"title='{job.title[:80]}' url='{job.url}'",
+                    notes=f"profile='{profile.name}' title='{job.title[:80]}' url='{job.url}'",
                 )
             )
 
