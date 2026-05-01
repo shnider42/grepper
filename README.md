@@ -102,7 +102,7 @@ workday-jobs \
   --csv fidelity_ranked.csv
 ```
 
-It also supports known branded Workday skins such as Netflix's `explore.jobs.netflix.net` careers page by routing that vanity URL to Netflix's underlying Workday CXS endpoint:
+It also supports known branded careers skins such as Netflix's `explore.jobs.netflix.net` careers page. Netflix is parsed from the public URL like a named source, then the client uses Netflix's branded jobs API for listing, pagination, and detail hydration:
 
 ```bash
 workday-jobs \
@@ -173,7 +173,7 @@ Those become:
 
 Do **not** collapse those into one string containing `&jobFamilyGroup=`.
 
-### 3. Newer shared-host and branded Workday URLs are parsed correctly
+### 3. Newer shared-host and branded careers URLs are parsed correctly
 
 Some employers use URLs like:
 
@@ -183,13 +183,13 @@ https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers
 
 Those need to map to the CXS API as tenant `fmr` and site `FidelityCareers`, not tenant `wd1` and site `recruiting`.
 
-Other employers use a branded skin in front of Workday, such as:
+Other employers use a branded skin in front of a jobs API, such as:
 
 ```text
 https://explore.jobs.netflix.net/careers
 ```
 
-Those need a known mapping to the canonical Workday CXS API endpoint because the tenant/site are not visible in the public URL.
+Those need a known mapping because the backend source is not visible from the public URL alone.
 
 ### 4. Location is now a search problem, not a hardcoded variable
 
