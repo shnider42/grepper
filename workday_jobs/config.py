@@ -10,15 +10,17 @@ class WorkdaySiteConfig:
     """Everything that varies from one Workday careers site to another.
 
     Examples:
-        Cisco:  base_url=https://cisco.wd5.myworkdayjobs.com, tenant=cisco, site=Cisco_Careers
-        Draper: base_url=https://draper.wd5.myworkdayjobs.com, tenant=draper, site=Draper_Careers
-        NVIDIA: base_url=https://nvidia.wd5.myworkdayjobs.com, tenant=nvidia, site=NVIDIAExternalCareerSite
+        Cisco:   base_url=https://cisco.wd5.myworkdayjobs.com, tenant=cisco, site=Cisco_Careers
+        Draper:  base_url=https://draper.wd5.myworkdayjobs.com, tenant=draper, site=Draper_Careers
+        NVIDIA:  base_url=https://nvidia.wd5.myworkdayjobs.com, tenant=nvidia, site=NVIDIAExternalCareerSite
+        Fidelity: base_url=https://wd1.myworkdaysite.com, tenant=fmr, site=FidelityCareers
     """
 
     base_url: str
     tenant: str
     site: str
     locale: str = "en-US"
+    public_path_prefix: str | None = None
     default_facets: dict[str, list[str]] = field(default_factory=dict)
     default_search_text: str = ""
     page_size: int = 20
@@ -34,6 +36,8 @@ class WorkdaySiteConfig:
 
     @property
     def public_site_prefix(self) -> str:
+        if self.public_path_prefix:
+            return self.public_path_prefix if self.public_path_prefix.startswith("/") else f"/{self.public_path_prefix}"
         return f"/{self.locale}/{self.site}"
 
     @property
@@ -63,6 +67,7 @@ class WorkdaySiteConfig:
         This handles URLs like:
             https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite?locationHierarchy1=...
             https://cisco.wd5.myworkdayjobs.com/en-US/Cisco_Careers/details/...
+            https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers
         """
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
@@ -73,18 +78,41 @@ class WorkdaySiteConfig:
 
         path_parts = [p for p in parsed.path.split("/") if p]
         site = None
+        public_path_prefix = None
+
+        remaining_parts = path_parts
+        prefix_parts_before_site = 0
         if path_parts:
-            if path_parts[0].lower() in {"en-us", "en_us", "fr-fr", "de-de"} and len(path_parts) > 1:
+            if _is_locale_path_part(path_parts[0]) and len(path_parts) > 1:
                 locale = path_parts[0]
-                site = path_parts[1]
-            else:
-                site = path_parts[0]
+                remaining_parts = path_parts[1:]
+                prefix_parts_before_site = 1
+
+            if len(remaining_parts) >= 3 and remaining_parts[0].lower() == "recruiting":
+                # Newer shared Workday host shape:
+                # /en-US/recruiting/{tenant}/{site}/...
+                tenant = remaining_parts[1]
+                site = remaining_parts[2]
+                public_path_prefix = "/" + "/".join(path_parts[: prefix_parts_before_site + 3])
+            elif remaining_parts:
+                site = remaining_parts[0]
 
         if not site:
             raise ValueError(f"Could not infer Workday site name from URL: {url!r}")
 
         facets = facets_from_query(parsed.query)
-        return cls(base_url=base_url, tenant=tenant, site=site, locale=locale, default_facets=facets)
+        return cls(
+            base_url=base_url,
+            tenant=tenant,
+            site=site,
+            locale=locale,
+            public_path_prefix=public_path_prefix,
+            default_facets=facets,
+        )
+
+
+def _is_locale_path_part(part: str) -> bool:
+    return part.lower() in {"en-us", "en_us", "fr-fr", "de-de"}
 
 
 def facets_from_query(query: str | Mapping[str, list[str] | str]) -> dict[str, list[str]]:
