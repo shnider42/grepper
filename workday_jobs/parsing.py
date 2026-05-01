@@ -94,13 +94,25 @@ def compact_posted_on(posting: dict[str, Any]) -> str:
     return str(posting.get("postedOn") or "")
 
 
-def build_public_job_url(base_url: str, site: str, external_path: str, *, locale: str = "en-US") -> str:
+def build_public_job_url(
+    base_url: str,
+    site: str,
+    external_path: str,
+    *,
+    locale: str = "en-US",
+    public_path_prefix: str | None = None,
+) -> str:
+    prefix = public_path_prefix or f"/{locale}/{site}"
+    if not prefix.startswith("/"):
+        prefix = f"/{prefix}"
+
     if not external_path:
-        return f"{base_url}/{locale}/{site}"
+        return f"{base_url}{prefix}"
     if external_path.startswith("http://") or external_path.startswith("https://"):
         return external_path
-    prefix = f"/{locale}/{site}"
-    return urljoin(base_url, prefix + external_path)
+
+    path = external_path if external_path.startswith("/") else f"/{external_path}"
+    return urljoin(base_url, prefix.rstrip("/") + path)
 
 
 def extract_json_ld(html_text: str) -> dict[str, Any]:
