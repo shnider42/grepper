@@ -236,6 +236,15 @@ class WorkdayClient:
         **kwargs: Any,
     ) -> Iterable[dict[str, Any]]:
         """Yield raw list-page job posting summaries until pages run out or max_pages is hit."""
+        if self.is_netflix_vanity_site:
+            yield from self._iter_netflix_summaries(
+                max_pages=max_pages,
+                limit=limit,
+                sleep_seconds=sleep_seconds,
+                **kwargs,
+            )
+            return
+
         page = 1
         actual_limit = limit or self.config.page_size
         while True:
@@ -252,6 +261,47 @@ class WorkdayClient:
                     yield posting
 
             if len(postings) < actual_limit:
+                return
+
+            page += 1
+            if sleep_seconds:
+                time.sleep(sleep_seconds)
+
+    def _iter_netflix_summaries(
+        self,
+        *,
+        max_pages: int | None = None,
+        limit: int | None = None,
+        sleep_seconds: float = 0.0,
+        **kwargs: Any,
+    ) -> Iterable[dict[str, Any]]:
+        """Paginate Netflix by the number of postings actually returned.
+
+        Netflix may cap each API response below the requested page size. The generic
+        Workday loop treats a short page as the end of the result set, but for Netflix
+        a short page can still have hundreds of remaining jobs. Advancing by the actual
+        returned count avoids skipping records when Netflix ignores or caps `num`.
+        """
+        page = 1
+        offset = 0
+        actual_limit = limit or self.config.page_size
+        while True:
+            if max_pages is not None and page > max_pages:
+                return
+
+            data = self.post_jobs(limit=actual_limit, offset=offset, **kwargs)
+            postings = data.get("jobPostings") or []
+            if not postings:
+                return
+
+            for posting in postings:
+                if isinstance(posting, dict):
+                    yield posting
+
+            returned_count = len(postings)
+            offset += returned_count
+            total = _safe_int_or_none(data.get("total"))
+            if total is not None and offset >= total:
                 return
 
             page += 1
@@ -396,3 +446,10 @@ def _format_netflix_posted(raw: Any) -> str:
         return raw.split("T", 1)[0]
 
     return ""
+
+
+def _safe_int_or_none(raw: Any) -> int | None:
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
