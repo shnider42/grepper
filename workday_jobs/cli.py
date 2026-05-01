@@ -7,7 +7,7 @@ from .client import WorkdayClient
 from .config import WorkdaySiteConfig
 from .exporters import write_ranked_csv, write_ranked_json
 from .facets import merge_facets
-from .ranker import KeywordRanker
+from .ranker import KeywordRanker, load_profile
 
 
 def _parse_facets(values: list[str] | None) -> dict[str, list[str]]:
@@ -20,6 +20,22 @@ def _parse_facets(values: list[str] | None) -> dict[str, list[str]]:
     return facets
 
 
+def _parse_weights(values: list[str] | None) -> dict[str, float]:
+    weights: dict[str, float] = {}
+    for value in values or []:
+        if "=" not in value:
+            raise ValueError(f"Weight must be term=number, got: {value!r}")
+        term, raw_weight = value.split("=", 1)
+        term = term.strip()
+        if not term:
+            raise ValueError(f"Weight term cannot be empty: {value!r}")
+        try:
+            weights[term] = float(raw_weight)
+        except ValueError as exc:
+            raise ValueError(f"Weight must be numeric for {term!r}, got: {raw_weight!r}") from exc
+    return weights
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Scrape and rank jobs from a Workday-powered career site.")
     parser.add_argument("--url", help="Public Workday URL. Facets in the query string are reused automatically.")
@@ -29,6 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--locale", default="en-US")
     parser.add_argument("--facet", action="append", help="Applied facet as key=value. Repeat for multiple values.")
     parser.add_argument("--query", default="", help="Workday searchText value.")
+    parser.add_argument(
+        "--profile",
+        help="Path to a JSON Profile file containing weighted keywords and scoring settings.",
+    )
+    parser.add_argument(
+        "--weight",
+        action="append",
+        help="Temporary Profile override as term=number. Repeat for multiple terms.",
+    )
     parser.add_argument(
         "--location",
         action="append",
@@ -138,13 +163,19 @@ def main(argv: list[str] | None = None) -> int:
         sleep_seconds=args.sleep,
         applied_facets=runtime_facets,
     )
-    ranked = KeywordRanker().rank(jobs)
+    profile = load_profile(args.profile)
+    weights = _parse_weights(args.weight)
+    ranked = KeywordRanker(profile).rank(jobs, weights=weights)
 
     for item in ranked[: args.top]:
         job = item.job
         print(f"Score: {item.score}\nTitle: {job.title}\nReq: {job.req_id}\nLocation: {job.location}\nURL: {job.url}")
         if item.matches.get("core"):
             print("Core:", ", ".join(item.matches["core"][:10]))
+        if item.matches.get("nice"):
+            print("Nice:", ", ".join(item.matches["nice"][:10]))
+        if item.matches.get("neg"):
+            print("Negative:", ", ".join(item.matches["neg"][:10]))
         print("---")
 
     if args.csv:
