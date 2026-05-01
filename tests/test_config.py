@@ -63,3 +63,27 @@ def test_from_public_url_parses_cushman_wakefield_site():
     assert config.locale == "en-US"
     assert config.public_site_prefix == "/en-US/External"
     assert config.list_url == "https://cw.wd1.myworkdayjobs.com/wday/cxs/cw/External/jobs"
+
+
+def test_from_public_url_parses_dalcour_maclaren_site():
+    config = WorkdaySiteConfig.from_public_url("https://dalcourmaclaren.wd3.myworkdayjobs.com/Dalcour-Maclaren-Careers")
+    assert config.base_url == "https://dalcourmaclaren.wd3.myworkdayjobs.com"
+    assert config.tenant == "dalcourmaclaren"
+    assert config.site == "Dalcour-Maclaren-Careers"
+    assert config.list_url == "https://dalcourmaclaren.wd3.myworkdayjobs.com/wday/cxs/dalcourmaclaren/Dalcour-Maclaren-Careers/jobs"
+
+
+def test_from_public_url_parses_pape_dawson_site():
+    config = WorkdaySiteConfig.from_public_url("https://papedawson.wd12.myworkdayjobs.com/pde")
+    assert config.base_url == "https://papedawson.wd12.myworkdayjobs.com"
+    assert config.tenant == "papedawson"
+    assert config.site == "pde"
+    assert config.list_url == "https://papedawson.wd12.myworkdayjobs.com/wday/cxs/papedawson/pde/jobs"
+
+
+def test_from_public_url_parses_old_republic_title_site():
+    config = WorkdaySiteConfig.from_public_url("https://oldrepublic.wd1.myworkdayjobs.com/oldrepublictitle")
+    assert config.base_url == "https://oldrepublic.wd1.myworkdayjobs.com"
+    assert config.tenant == "oldrepublic"
+    assert config.site == "oldrepublictitle"
+    assert config.list_url == "https://oldrepublic.wd1.myworkdayjobs.com/wday/cxs/oldrepublic/oldrepublictitle/jobs"
