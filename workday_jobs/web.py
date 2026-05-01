@@ -19,6 +19,7 @@ DEFAULT_EXAMPLES = {
     "NVIDIA": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite",
     "Draper": "https://draper.wd5.myworkdayjobs.com/en-US/Draper_Careers",
     "Fidelity": "https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers",
+    "Netflix": "https://explore.jobs.netflix.net/careers",
 }
 
 
