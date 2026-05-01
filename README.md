@@ -34,6 +34,7 @@ workday_jobs/
 examples/
   run_cisco.py
   run_draper.py
+  run_fidelity.py
   run_nvidia.py
 tests/
   test_config.py
@@ -86,6 +87,16 @@ workday-jobs \
   --csv nvidia_ranked.csv
 ```
 
+The parser also supports newer shared-host Workday URLs such as Fidelity's:
+
+```bash
+workday-jobs \
+  --url "https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers" \
+  --pages 5 \
+  --max-jobs 75 \
+  --csv fidelity_ranked.csv
+```
+
 ## Location search instead of hardcoded location IDs
 
 Different Workday tenants expose location facets differently. NVIDIA may have a country-level `locationHierarchy1` value for the United States, while Cisco may expose many city-level `locations` values whose labels contain `(US)` or `US`.
@@ -129,7 +140,7 @@ workday-jobs \
 
 ### 1. Site details are config, not code
 
-Cisco, NVIDIA, Draper, Red Hat, etc. should become different `WorkdaySiteConfig` values rather than different Python scripts.
+Cisco, NVIDIA, Draper, Fidelity, Red Hat, etc. should become different `WorkdaySiteConfig` values rather than different Python scripts.
 
 ### 2. Repeated facet query params are parsed correctly
 
@@ -147,21 +158,31 @@ Those become:
 
 Do **not** collapse those into one string containing `&jobFamilyGroup=`.
 
-### 3. Location is now a search problem, not a hardcoded variable
+### 3. Newer shared-host Workday URLs are parsed correctly
+
+Some employers use URLs like:
+
+```text
+https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers
+```
+
+Those need to map to the CXS API as tenant `fmr` and site `FidelityCareers`, not tenant `wd1` and site `recruiting`.
+
+### 4. Location is now a search problem, not a hardcoded variable
 
 Use `--location US`, `--location Boston`, or `--location Massachusetts` and let the tenant-specific facet resolver find the correct Workday facet key/value pair.
 
-### 4. Description cleanup has a safe fallback
+### 5. Description cleanup has a safe fallback
 
 The old version sometimes returned `None` when the employer did not use the exact expected heading. This version tries known headings, trims known boilerplate, but otherwise falls back to the full cleaned schema.org JobPosting description.
 
-### 5. Ranking is replaceable
+### 6. Ranking is replaceable
 
 `KeywordRanker` is intentionally simple, but the default profile is now tuned toward Chris-style roles: quality engineering, test automation, Linux/Python, SRE/DevOps, Kubernetes/OpenShift, enterprise storage, network OS/networking, customer-facing solutions work, and technical leadership. Later, it can be replaced or complemented by embeddings/LLM scoring without touching the Workday scraping layer.
 
 ## Suggested next step
 
-Add one tiny `sites.yaml` or `sites.json` file so you can store named configs like `cisco`, `nvidia`, `draper`, `redhat`, etc., then call:
+Add one tiny `sites.yaml` or `sites.json` file so you can store named configs like `cisco`, `nvidia`, `draper`, `fidelity`, `redhat`, etc., then call:
 
 ```bash
 workday-jobs --site-config cisco --pages 5
