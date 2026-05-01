@@ -167,6 +167,7 @@ class WorkdayClient:
             self.config.site,
             str(external_path),
             locale=self.config.locale,
+            public_path_prefix=self.config.public_site_prefix,
         )
 
         json_ld = self.fetch_json_ld(url)
@@ -232,6 +233,7 @@ class WorkdayClient:
                     self.config.site,
                     str(external_path),
                     locale=self.config.locale,
+                    public_path_prefix=self.config.public_site_prefix,
                 )
                 job = JobPosting(
                     source=self.config.site,
