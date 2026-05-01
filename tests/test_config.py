@@ -35,3 +35,21 @@ def test_from_public_url_parses_myworkdaysite_recruiting_site():
     assert config.public_site_prefix == "/en-US/recruiting/fmr/FidelityCareers"
     assert config.referer == "https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers"
     assert config.list_url == "https://wd1.myworkdaysite.com/wday/cxs/fmr/FidelityCareers/jobs"
+
+
+def test_from_public_url_parses_netflix_vanity_site():
+    config = WorkdaySiteConfig.from_public_url("https://explore.jobs.netflix.net/careers")
+    assert config.base_url == "https://netflix.wd1.myworkdayjobs.com"
+    assert config.tenant == "netflix"
+    assert config.site == "Netflix"
+    assert config.list_url == "https://netflix.wd1.myworkdayjobs.com/wday/cxs/netflix/Netflix/jobs"
+
+
+def test_from_public_url_parses_direct_cxs_endpoint():
+    config = WorkdaySiteConfig.from_public_url(
+        "https://netflix.wd1.myworkdayjobs.com/wday/cxs/netflix/Netflix/jobs"
+    )
+    assert config.base_url == "https://netflix.wd1.myworkdayjobs.com"
+    assert config.tenant == "netflix"
+    assert config.site == "Netflix"
+    assert config.list_url == "https://netflix.wd1.myworkdayjobs.com/wday/cxs/netflix/Netflix/jobs"
