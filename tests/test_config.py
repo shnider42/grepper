@@ -53,3 +53,13 @@ def test_from_public_url_parses_direct_cxs_endpoint():
     assert config.tenant == "netflix"
     assert config.site == "Netflix"
     assert config.list_url == "https://netflix.wd1.myworkdayjobs.com/wday/cxs/netflix/Netflix/jobs"
+
+
+def test_from_public_url_parses_cushman_wakefield_site():
+    config = WorkdaySiteConfig.from_public_url("https://cw.wd1.myworkdayjobs.com/en-US/External")
+    assert config.base_url == "https://cw.wd1.myworkdayjobs.com"
+    assert config.tenant == "cw"
+    assert config.site == "External"
+    assert config.locale == "en-US"
+    assert config.public_site_prefix == "/en-US/External"
+    assert config.list_url == "https://cw.wd1.myworkdayjobs.com/wday/cxs/cw/External/jobs"

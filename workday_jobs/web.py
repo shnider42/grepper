@@ -20,6 +20,7 @@ DEFAULT_EXAMPLES = {
     "Draper": "https://draper.wd5.myworkdayjobs.com/en-US/Draper_Careers",
     "Fidelity": "https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers",
     "Netflix": "https://explore.jobs.netflix.net/careers",
+    "Cushman & Wakefield": "https://cw.wd1.myworkdayjobs.com/en-US/External",
 }
 
 
