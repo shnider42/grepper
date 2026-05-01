@@ -18,6 +18,7 @@ DEFAULT_EXAMPLES = {
     "Cisco": "https://cisco.wd5.myworkdayjobs.com/en-US/Cisco_Careers",
     "NVIDIA": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite",
     "Draper": "https://draper.wd5.myworkdayjobs.com/en-US/Draper_Careers",
+    "Fidelity": "https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers",
 }
 
 
@@ -96,6 +97,7 @@ def lightweight_job_from_summary(client: WorkdayClient, summary: dict[str, Any])
         client.config.site,
         str(external_path),
         locale=client.config.locale,
+        public_path_prefix=client.config.public_site_prefix,
     )
     return JobPosting(
         source=client.config.site,
@@ -163,13 +165,14 @@ def discover_filtered_jobs(
 
 
 def run_search(form: SearchForm) -> dict[str, Any]:
-    config = WorkdaySiteConfig.from_public_url(form.url)
+    parsed_config = WorkdaySiteConfig.from_public_url(form.url)
     config = WorkdaySiteConfig(
-        base_url=config.base_url,
-        tenant=config.tenant,
-        site=config.site,
-        locale=config.locale,
-        default_facets=config.default_facets,
+        base_url=parsed_config.base_url,
+        tenant=parsed_config.tenant,
+        site=parsed_config.site,
+        locale=parsed_config.locale,
+        public_path_prefix=parsed_config.public_path_prefix,
+        default_facets=parsed_config.default_facets,
         default_search_text=form.query,
         page_size=form.page_size,
     )
