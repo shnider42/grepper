@@ -21,6 +21,9 @@ DEFAULT_EXAMPLES = {
     "Fidelity": "https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers",
     "Netflix": "https://explore.jobs.netflix.net/careers",
     "Cushman & Wakefield": "https://cw.wd1.myworkdayjobs.com/en-US/External",
+    "Dalcour Maclaren": "https://dalcourmaclaren.wd3.myworkdayjobs.com/Dalcour-Maclaren-Careers",
+    "Pape-Dawson": "https://papedawson.wd12.myworkdayjobs.com/pde",
+    "Old Republic Title": "https://oldrepublic.wd1.myworkdayjobs.com/oldrepublictitle",
 }
 
 
