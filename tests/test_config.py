@@ -22,3 +22,16 @@ def test_from_public_url_parses_locale_site():
     assert config.tenant == "cisco"
     assert config.site == "Cisco_Careers"
     assert config.locale == "en-US"
+
+
+def test_from_public_url_parses_myworkdaysite_recruiting_site():
+    config = WorkdaySiteConfig.from_public_url(
+        "https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers"
+    )
+    assert config.base_url == "https://wd1.myworkdaysite.com"
+    assert config.tenant == "fmr"
+    assert config.site == "FidelityCareers"
+    assert config.locale == "en-US"
+    assert config.public_site_prefix == "/en-US/recruiting/fmr/FidelityCareers"
+    assert config.referer == "https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers"
+    assert config.list_url == "https://wd1.myworkdaysite.com/wday/cxs/fmr/FidelityCareers/jobs"
