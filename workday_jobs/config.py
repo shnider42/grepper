@@ -5,6 +5,18 @@ from typing import Mapping
 from urllib.parse import parse_qs, urlparse
 
 
+# Some companies put a branded careers skin in front of a canonical Workday CXS site.
+# The public URL alone does not expose the Workday tenant/site, so keep those known
+# mappings here until this grows into a proper named sites file.
+_KNOWN_VANITY_WORKDAY_SITES: dict[str, tuple[str, str, str]] = {
+    "explore.jobs.netflix.net": (
+        "https://netflix.wd1.myworkdayjobs.com",
+        "netflix",
+        "Netflix",
+    ),
+}
+
+
 @dataclass(frozen=True)
 class WorkdaySiteConfig:
     """Everything that varies from one Workday careers site to another.
@@ -14,6 +26,7 @@ class WorkdaySiteConfig:
         Draper:  base_url=https://draper.wd5.myworkdayjobs.com, tenant=draper, site=Draper_Careers
         NVIDIA:  base_url=https://nvidia.wd5.myworkdayjobs.com, tenant=nvidia, site=NVIDIAExternalCareerSite
         Fidelity: base_url=https://wd1.myworkdaysite.com, tenant=fmr, site=FidelityCareers
+        Netflix: base_url=https://netflix.wd1.myworkdayjobs.com, tenant=netflix, site=Netflix
     """
 
     base_url: str
@@ -68,6 +81,7 @@ class WorkdaySiteConfig:
             https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite?locationHierarchy1=...
             https://cisco.wd5.myworkdayjobs.com/en-US/Cisco_Careers/details/...
             https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers
+            https://explore.jobs.netflix.net/careers
         """
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
@@ -77,6 +91,17 @@ class WorkdaySiteConfig:
         tenant = parsed.netloc.split(".", 1)[0]
 
         path_parts = [p for p in parsed.path.split("/") if p]
+        vanity_config = _KNOWN_VANITY_WORKDAY_SITES.get(parsed.netloc.lower())
+        if vanity_config and (not path_parts or path_parts[0].lower() == "careers"):
+            vanity_base_url, vanity_tenant, vanity_site = vanity_config
+            return cls(
+                base_url=vanity_base_url,
+                tenant=vanity_tenant,
+                site=vanity_site,
+                locale=locale,
+                default_facets=facets_from_query(parsed.query),
+            )
+
         site = None
         public_path_prefix = None
 
@@ -88,7 +113,12 @@ class WorkdaySiteConfig:
                 remaining_parts = path_parts[1:]
                 prefix_parts_before_site = 1
 
-            if len(remaining_parts) >= 3 and remaining_parts[0].lower() == "recruiting":
+            if len(remaining_parts) >= 5 and remaining_parts[0].lower() == "wday" and remaining_parts[1].lower() == "cxs":
+                # Direct CXS endpoint shape:
+                # /wday/cxs/{tenant}/{site}/jobs
+                tenant = remaining_parts[2]
+                site = remaining_parts[3]
+            elif len(remaining_parts) >= 3 and remaining_parts[0].lower() == "recruiting":
                 # Newer shared Workday host shape:
                 # /en-US/recruiting/{tenant}/{site}/...
                 tenant = remaining_parts[1]
