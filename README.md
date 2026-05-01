@@ -35,6 +35,7 @@ examples/
   run_cisco.py
   run_draper.py
   run_fidelity.py
+  run_netflix.py
   run_nvidia.py
 tests/
   test_config.py
@@ -97,6 +98,16 @@ workday-jobs \
   --csv fidelity_ranked.csv
 ```
 
+It also supports known branded Workday skins such as Netflix's `explore.jobs.netflix.net` careers page by routing that vanity URL to Netflix's underlying Workday CXS endpoint:
+
+```bash
+workday-jobs \
+  --url "https://explore.jobs.netflix.net/careers" \
+  --pages 5 \
+  --max-jobs 75 \
+  --csv netflix_ranked.csv
+```
+
 ## Location search instead of hardcoded location IDs
 
 Different Workday tenants expose location facets differently. NVIDIA may have a country-level `locationHierarchy1` value for the United States, while Cisco may expose many city-level `locations` values whose labels contain `(US)` or `US`.
@@ -140,7 +151,7 @@ workday-jobs \
 
 ### 1. Site details are config, not code
 
-Cisco, NVIDIA, Draper, Fidelity, Red Hat, etc. should become different `WorkdaySiteConfig` values rather than different Python scripts.
+Cisco, NVIDIA, Draper, Fidelity, Netflix, Red Hat, etc. should become different `WorkdaySiteConfig` values rather than different Python scripts.
 
 ### 2. Repeated facet query params are parsed correctly
 
@@ -158,7 +169,7 @@ Those become:
 
 Do **not** collapse those into one string containing `&jobFamilyGroup=`.
 
-### 3. Newer shared-host Workday URLs are parsed correctly
+### 3. Newer shared-host and branded Workday URLs are parsed correctly
 
 Some employers use URLs like:
 
@@ -167,6 +178,14 @@ https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers
 ```
 
 Those need to map to the CXS API as tenant `fmr` and site `FidelityCareers`, not tenant `wd1` and site `recruiting`.
+
+Other employers use a branded skin in front of Workday, such as:
+
+```text
+https://explore.jobs.netflix.net/careers
+```
+
+Those need a known mapping to the canonical Workday CXS API endpoint because the tenant/site are not visible in the public URL.
 
 ### 4. Location is now a search problem, not a hardcoded variable
 
@@ -182,7 +201,7 @@ The old version sometimes returned `None` when the employer did not use the exac
 
 ## Suggested next step
 
-Add one tiny `sites.yaml` or `sites.json` file so you can store named configs like `cisco`, `nvidia`, `draper`, `fidelity`, `redhat`, etc., then call:
+Add one tiny `sites.yaml` or `sites.json` file so you can store named configs like `cisco`, `nvidia`, `draper`, `fidelity`, `netflix`, `redhat`, etc., then call:
 
 ```bash
 workday-jobs --site-config cisco --pages 5
