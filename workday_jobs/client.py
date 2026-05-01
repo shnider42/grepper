@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import time
 from typing import Any, Iterable
 
@@ -18,12 +19,20 @@ from .parsing import (
 )
 
 
+NETFLIX_API_URL = "https://explore.jobs.netflix.net/api/apply/v2/jobs"
+NETFLIX_CAREERS_URL = "https://explore.jobs.netflix.net/careers"
+
+
 class WorkdayClient:
     """Small reusable client for Workday CXS career sites."""
 
     def __init__(self, config: WorkdaySiteConfig, *, session: requests.Session | None = None) -> None:
         self.config = config
         self.session = session or requests.Session()
+
+    @property
+    def is_netflix_vanity_site(self) -> bool:
+        return self.config.tenant == "netflix" and self.config.site == "Netflix"
 
     def post_jobs(
         self,
@@ -34,6 +43,9 @@ class WorkdayClient:
         search_text: str | None = None,
         include_empty_facets: bool = True,
     ) -> dict[str, Any]:
+        if self.is_netflix_vanity_site:
+            return self._post_netflix_jobs(limit=limit, offset=offset, search_text=search_text)
+
         payload: dict[str, Any] = {
             "limit": limit or self.config.page_size,
             "offset": offset,
@@ -61,7 +73,99 @@ class WorkdayClient:
             )
 
         response.raise_for_status()
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as exc:
+            preview = response.text[:500].replace("\n", " ")
+            content_type = response.headers.get("Content-Type", "unknown content type")
+            raise ValueError(
+                "Expected JSON from Workday CXS API but got "
+                f"{response.status_code} {content_type} from {response.url}. "
+                f"Body preview: {preview!r}"
+            ) from exc
+
+    def _post_netflix_jobs(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        search_text: str | None = None,
+    ) -> dict[str, Any]:
+        actual_limit = limit or self.config.page_size
+        query = self.config.default_search_text if search_text is None else search_text
+        response = self.session.get(
+            NETFLIX_API_URL,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Grepper jobs research tool)",
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": NETFLIX_CAREERS_URL,
+            },
+            params={
+                "domain": "netflix.com",
+                "query": query,
+                "sort_by": "new",
+                "start": offset,
+                "num": actual_limit,
+            },
+            timeout=self.config.timeout_seconds,
+        )
+        response.raise_for_status()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            preview = response.text[:500].replace("\n", " ")
+            content_type = response.headers.get("Content-Type", "unknown content type")
+            raise ValueError(
+                "Expected JSON from Netflix jobs API but got "
+                f"{response.status_code} {content_type} from {response.url}. "
+                f"Body preview: {preview!r}"
+            ) from exc
+
+        positions = data.get("positions") or data.get("records") or data.get("jobs") or []
+        if not isinstance(positions, list):
+            positions = []
+
+        return {
+            "jobPostings": [self._netflix_summary_from_position(position) for position in positions if isinstance(position, dict)],
+            "total": data.get("count") or data.get("total") or len(positions),
+            "raw": data,
+        }
+
+    def _netflix_summary_from_position(self, position: dict[str, Any]) -> dict[str, Any]:
+        job_id = str(position.get("id") or position.get("external_id") or "")
+        locations = position.get("locations") or position.get("location") or []
+        if isinstance(locations, str):
+            location_text = locations
+        elif isinstance(locations, list):
+            location_text = ", ".join(str(location) for location in locations if location)
+        else:
+            location_text = ""
+
+        title = str(position.get("name") or position.get("title") or "")
+        posted = _format_netflix_posted(position.get("t_create") or position.get("created_at"))
+        canonical_url = str(
+            position.get("canonicalPositionUrl")
+            or position.get("url")
+            or (f"{NETFLIX_CAREERS_URL}/job/{job_id}" if job_id else NETFLIX_CAREERS_URL)
+        )
+        description_html = str(position.get("description") or position.get("job_description") or "")
+
+        return {
+            "id": job_id,
+            "jobId": job_id,
+            "uid": job_id,
+            "req_id": job_id,
+            "title": title,
+            "titleSimple": title,
+            "locationsText": location_text,
+            "postedOn": posted,
+            "datePosted": posted,
+            "externalPath": canonical_url,
+            "description_html": description_html,
+            "description_text": clean_description(description_html),
+            "raw_position": position,
+        }
 
     def fetch_facets(
         self,
@@ -95,6 +199,9 @@ class WorkdayClient:
         Examples: "US", "United States", "Boston", "Massachusetts", "RTP". The
         returned options include the Workday facet key and ID needed for appliedFacets.
         """
+        if self.is_netflix_vanity_site:
+            return []
+
         payload = self.fetch_facets(applied_facets=applied_facets)
         return search_facet_options(payload, query, location_only=True, limit=limit)
 
@@ -169,6 +276,25 @@ class WorkdayClient:
             locale=self.config.locale,
             public_path_prefix=self.config.public_site_prefix,
         )
+
+        if self.is_netflix_vanity_site:
+            description_html = summary.get("description_html")
+            description_text = str(summary.get("description_text") or clean_description(description_html))
+            return JobPosting(
+                source="Netflix",
+                req_id=str(summary.get("req_id") or summary.get("id") or ""),
+                title=str(summary.get("title") or summary.get("titleSimple") or ""),
+                location=compact_location(summary),
+                posted=compact_posted_on(summary),
+                url=url,
+                job_id=str(summary.get("id") or summary.get("jobId") or summary.get("uid") or ""),
+                date_posted=summary.get("datePosted"),
+                hiring_organization="Netflix",
+                description_html=description_html,
+                description_text=description_text,
+                raw_summary=summary,
+                raw_json_ld={},
+            )
 
         json_ld = self.fetch_json_ld(url)
         description_html = json_ld.get("description") if json_ld else None
@@ -249,3 +375,24 @@ class WorkdayClient:
             if max_jobs is not None and len(jobs) >= max_jobs:
                 break
         return jobs
+
+
+def _format_netflix_posted(raw: Any) -> str:
+    if raw in (None, ""):
+        return ""
+
+    if isinstance(raw, (int, float)):
+        timestamp = float(raw)
+        if timestamp > 10_000_000_000:  # tolerate milliseconds
+            timestamp /= 1000
+        try:
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc).date().isoformat()
+        except (OSError, ValueError):
+            return ""
+
+    if isinstance(raw, str):
+        if raw.isdigit():
+            return _format_netflix_posted(int(raw))
+        return raw.split("T", 1)[0]
+
+    return ""
