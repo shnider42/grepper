@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 from .client import WorkdayClient
-from .config import WorkdaySiteConfig, facets_from_query
+from .config import WorkdaySiteConfig
 from .exporters import write_ranked_csv, write_ranked_json
 from .facets import merge_facets
 from .ranker import KeywordRanker
@@ -64,15 +63,16 @@ def config_from_args(args: argparse.Namespace) -> WorkdaySiteConfig:
     cli_facets = _parse_facets(args.facet)
 
     if args.url:
-        config = WorkdaySiteConfig.from_public_url(args.url, locale=args.locale)
-        merged_facets = dict(config.default_facets)
+        parsed_config = WorkdaySiteConfig.from_public_url(args.url, locale=args.locale)
+        merged_facets = dict(parsed_config.default_facets)
         for key, values in cli_facets.items():
             merged_facets.setdefault(key, []).extend(values)
         return WorkdaySiteConfig(
-            base_url=config.base_url,
-            tenant=config.tenant,
-            site=config.site,
-            locale=config.locale,
+            base_url=parsed_config.base_url,
+            tenant=parsed_config.tenant,
+            site=parsed_config.site,
+            locale=parsed_config.locale,
+            public_path_prefix=parsed_config.public_path_prefix,
             default_facets=merged_facets,
             default_search_text=args.query,
             page_size=args.page_size,

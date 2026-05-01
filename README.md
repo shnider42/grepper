@@ -35,6 +35,7 @@ examples/
   run_cisco.py
   run_draper.py
   run_fidelity.py
+  run_netflix.py
   run_nvidia.py
 tests/
   test_config.py
@@ -58,6 +59,10 @@ On Windows PowerShell, activation is usually:
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
+
+### Local development in PyCharm
+
+When running locally, this project is usually run through JetBrains PyCharm 2025. Once PyCharm is pointed at the project interpreter / virtual environment, you should not need to manually run the environment activation command every time. The shell activation steps above are mainly for a fresh terminal, first-time setup, or running outside PyCharm.
 
 ## Run the browser UI
 
@@ -95,6 +100,16 @@ workday-jobs \
   --pages 5 \
   --max-jobs 75 \
   --csv fidelity_ranked.csv
+```
+
+It also supports known branded careers skins such as Netflix's `explore.jobs.netflix.net` careers page. Netflix is parsed from the public URL like a named source, then the client uses Netflix's branded jobs API for listing, pagination, and detail hydration:
+
+```bash
+workday-jobs \
+  --url "https://explore.jobs.netflix.net/careers" \
+  --pages 5 \
+  --max-jobs 75 \
+  --csv netflix_ranked.csv
 ```
 
 ## Location search instead of hardcoded location IDs
@@ -140,7 +155,7 @@ workday-jobs \
 
 ### 1. Site details are config, not code
 
-Cisco, NVIDIA, Draper, Fidelity, Red Hat, etc. should become different `WorkdaySiteConfig` values rather than different Python scripts.
+Cisco, NVIDIA, Draper, Fidelity, Netflix, Red Hat, etc. should become different `WorkdaySiteConfig` values rather than different Python scripts.
 
 ### 2. Repeated facet query params are parsed correctly
 
@@ -158,7 +173,7 @@ Those become:
 
 Do **not** collapse those into one string containing `&jobFamilyGroup=`.
 
-### 3. Newer shared-host Workday URLs are parsed correctly
+### 3. Newer shared-host and branded careers URLs are parsed correctly
 
 Some employers use URLs like:
 
@@ -167,6 +182,14 @@ https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers
 ```
 
 Those need to map to the CXS API as tenant `fmr` and site `FidelityCareers`, not tenant `wd1` and site `recruiting`.
+
+Other employers use a branded skin in front of a jobs API, such as:
+
+```text
+https://explore.jobs.netflix.net/careers
+```
+
+Those need a known mapping because the backend source is not visible from the public URL alone.
 
 ### 4. Location is now a search problem, not a hardcoded variable
 
@@ -182,7 +205,7 @@ The old version sometimes returned `None` when the employer did not use the exac
 
 ## Suggested next step
 
-Add one tiny `sites.yaml` or `sites.json` file so you can store named configs like `cisco`, `nvidia`, `draper`, `fidelity`, `redhat`, etc., then call:
+Add one tiny `sites.yaml` or `sites.json` file so you can store named configs like `cisco`, `nvidia`, `draper`, `fidelity`, `netflix`, `redhat`, etc., then call:
 
 ```bash
 workday-jobs --site-config cisco --pages 5
