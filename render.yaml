@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: grepper-workday-web
+    runtime: python
+    branch: web-profile-selection
+    buildCommand: pip install -e . gunicorn
+    startCommand: gunicorn 'workday_jobs.web:create_app()' --bind 0.0.0.0:$PORT
