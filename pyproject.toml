@@ -1,7 +1,7 @@
 [project]
 name = "grepper-workday-modular"
 version = "0.1.0"
-description = "Reusable Workday jobs scraper, normalizer, cleaner, and ranker."
+description = "Reusable jobs scraper, normalizer, cleaner, and ranker for Workday and iCIMS sources."
 requires-python = ">=3.10"
 dependencies = [
     "flask>=3.0.0",
@@ -9,6 +9,8 @@ dependencies = [
 ]
 
 [project.scripts]
+grepper-jobs = "workday_jobs.cli:main"
+grepper-jobs-web = "workday_jobs.web:main"
 workday-jobs = "workday_jobs.cli:main"
 workday-jobs-web = "workday_jobs.web:main"
 
