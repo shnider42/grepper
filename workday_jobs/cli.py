@@ -7,7 +7,7 @@ from .config import WorkdaySiteConfig
 from .exporters import write_ranked_csv, write_ranked_json
 from .facets import merge_facets
 from .filtering import filter_jobs_by_locations
-from .ranker import KeywordRanker, load_profile
+from .ranker import KeywordRanker
 from .sources import (
     SiteConfig,
     client_from_config,
@@ -53,13 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--facet", action="append", help="Workday applied facet as key=value. Repeat for multiple values.")
     parser.add_argument("--query", default="", help="Provider search text value.")
     parser.add_argument(
-        "--profile",
-        help="Path to a JSON Profile file containing weighted keywords and scoring settings.",
-    )
-    parser.add_argument(
         "--weight",
         action="append",
-        help="Temporary Profile override as term=number. Repeat for multiple terms.",
+        help="Temporary ranking override as term=number. Repeat for multiple terms.",
     )
     parser.add_argument(
         "--location",
@@ -189,9 +185,8 @@ def main(argv: list[str] | None = None) -> int:
     if location_queries and not supports_workday_facets(config):
         jobs = filter_jobs_by_locations(jobs, location_queries)
 
-    profile = load_profile(args.profile)
     weights = _parse_weights(args.weight)
-    ranked = KeywordRanker(profile).rank(jobs, weights=weights)
+    ranked = KeywordRanker().rank(jobs, weights=weights)
 
     print(f"Provider: {provider_name(config)}")
     for item in ranked[: args.top]:
