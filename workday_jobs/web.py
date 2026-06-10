@@ -11,7 +11,7 @@ from .facets import FacetOption, merge_facets, normalize_for_match
 from .filtering import job_matches_location
 from .models import JobPosting
 from .parsing import build_public_job_url, compact_location, compact_posted_on, parse_req_id_from_path
-from .ranker import KeywordRanker
+from .ranker import KeywordRanker, Profile, default_profile
 
 
 DEFAULT_EXAMPLES = {
@@ -26,6 +26,39 @@ DEFAULT_EXAMPLES = {
     "Old Republic Title": "https://oldrepublic.wd1.myworkdayjobs.com/oldrepublictitle",
 }
 
+PROFILE_LABELS = {
+    "chris-default": "Chris: solutions / QE / customer-facing engineering",
+    "surveying-legal-property": "Surveying / zoning / legal property",
+}
+
+SURVEYING_LEGAL_PROPERTY_PROFILE = Profile(
+    name="surveying-legal-property",
+    core_plus={
+        "surveying": 4.0,
+        "zoning": 3.5,
+        "property": 2.0,
+        "permitting": 2.0,
+        "land use": 3.0,
+    },
+    nice={
+        "legal": 1.0,
+        "compliance": 1.2,
+        "real estate": 1.5,
+    },
+    light_neg={
+        "intern": -2.0,
+        "sales": -2.5,
+    },
+    title_boost=1.35,
+    length_bonus_cap=1.25,
+    length_bonus_divisor=900.0,
+)
+
+PROFILE_PRESETS = {
+    "chris-default": default_profile(),
+    "surveying-legal-property": SURVEYING_LEGAL_PROPERTY_PROFILE,
+}
+
 
 @dataclass
 class SearchForm:
@@ -33,6 +66,13 @@ class SearchForm:
     location: str = ""
     query: str = ""
     title_keywords: str = ""
+    profile_key: str = "chris-default"
+    core_plus_weights: str = ""
+    nice_weights: str = ""
+    light_neg_weights: str = ""
+    title_boost: float = 1.35
+    length_bonus_cap: float = 1.25
+    length_bonus_divisor: float = 900.0
     pages: int = 10
     page_size: int = 20
     max_jobs: int = 50
@@ -76,15 +116,113 @@ def _safe_int(value: str | None, default: int, *, minimum: int = 1, maximum: int
     return max(minimum, min(parsed, maximum))
 
 
+def _safe_float(value: str | None, default: float, *, minimum: float = 0.0, maximum: float = 10_000.0) -> float:
+    try:
+        parsed = float(value or default)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(parsed, maximum))
+
+
+def clone_profile(profile: Profile) -> Profile:
+    return Profile.from_dict(profile.to_dict())
+
+
+def profile_preset(key: str) -> Profile:
+    return clone_profile(PROFILE_PRESETS.get(key, PROFILE_PRESETS["chris-default"]))
+
+
+def profile_to_weight_text(weights: dict[str, float]) -> str:
+    return "\n".join(f"{term} = {weight:g}" for term, weight in weights.items())
+
+
+def apply_profile_defaults(form: SearchForm, profile_key: str) -> SearchForm:
+    profile = profile_preset(profile_key)
+    form.profile_key = profile_key if profile_key in PROFILE_PRESETS else "chris-default"
+    form.core_plus_weights = profile_to_weight_text(profile.core_plus)
+    form.nice_weights = profile_to_weight_text(profile.nice)
+    form.light_neg_weights = profile_to_weight_text(profile.light_neg)
+    form.title_boost = profile.title_boost
+    form.length_bonus_cap = profile.length_bonus_cap
+    form.length_bonus_divisor = profile.length_bonus_divisor
+    return form
+
+
+def parse_weight_text(raw: str, field_name: str) -> dict[str, float]:
+    """Parse editable Profile weights from one `term = number` entry per line.
+
+    Commas are accepted too, but newlines are easier to read in the browser.
+    """
+    weights: dict[str, float] = {}
+    for line_number, chunk in enumerate(raw.replace(",", "\n").splitlines(), start=1):
+        value = chunk.strip()
+        if not value:
+            continue
+        if "=" not in value:
+            raise ValueError(f"{field_name} line {line_number} must look like term = weight: {value!r}")
+        term, raw_weight = value.split("=", 1)
+        term = term.strip()
+        if not term:
+            raise ValueError(f"{field_name} line {line_number} has an empty term")
+        try:
+            weights[term.casefold()] = float(raw_weight.strip())
+        except ValueError as exc:
+            raise ValueError(f"{field_name} line {line_number} has a non-numeric weight: {raw_weight!r}") from exc
+    return weights
+
+
+def profile_from_form(form: SearchForm) -> Profile:
+    base_profile = profile_preset(form.profile_key)
+    return Profile(
+        name=base_profile.name,
+        core_plus=parse_weight_text(form.core_plus_weights, "Core weights"),
+        nice=parse_weight_text(form.nice_weights, "Nice weights"),
+        light_neg=parse_weight_text(form.light_neg_weights, "Negative weights"),
+        title_boost=form.title_boost,
+        length_bonus_cap=form.length_bonus_cap,
+        length_bonus_divisor=form.length_bonus_divisor,
+    )
+
+
+def profile_presets_for_template() -> dict[str, dict[str, Any]]:
+    presets: dict[str, dict[str, Any]] = {}
+    for key, profile in PROFILE_PRESETS.items():
+        presets[key] = {
+            "label": PROFILE_LABELS[key],
+            "name": profile.name,
+            "core_plus_weights": profile_to_weight_text(profile.core_plus),
+            "nice_weights": profile_to_weight_text(profile.nice),
+            "light_neg_weights": profile_to_weight_text(profile.light_neg),
+            "title_boost": profile.title_boost,
+            "length_bonus_cap": profile.length_bonus_cap,
+            "length_bonus_divisor": profile.length_bonus_divisor,
+        }
+    return presets
+
+
 def form_from_request() -> SearchForm:
     if request.method != "POST":
-        return SearchForm()
+        return apply_profile_defaults(SearchForm(), "chris-default")
 
+    profile_key = request.form.get("profile_key") or "chris-default"
+    preset = profile_preset(profile_key)
     return SearchForm(
         url=(request.form.get("url") or "").strip(),
         location=(request.form.get("location") or "").strip(),
         query=(request.form.get("query") or "").strip(),
         title_keywords=(request.form.get("title_keywords") or "").strip(),
+        profile_key=profile_key if profile_key in PROFILE_PRESETS else "chris-default",
+        core_plus_weights=(request.form.get("core_plus_weights") or "").strip(),
+        nice_weights=(request.form.get("nice_weights") or "").strip(),
+        light_neg_weights=(request.form.get("light_neg_weights") or "").strip(),
+        title_boost=_safe_float(request.form.get("title_boost"), preset.title_boost, minimum=0.0, maximum=10.0),
+        length_bonus_cap=_safe_float(request.form.get("length_bonus_cap"), preset.length_bonus_cap, minimum=0.0, maximum=10.0),
+        length_bonus_divisor=_safe_float(
+            request.form.get("length_bonus_divisor"),
+            preset.length_bonus_divisor,
+            minimum=1.0,
+            maximum=100_000.0,
+        ),
         pages=_safe_int(request.form.get("pages"), 10, minimum=1, maximum=100),
         page_size=_safe_int(request.form.get("page_size"), 20, minimum=1, maximum=100),
         max_jobs=_safe_int(request.form.get("max_jobs"), 50, minimum=1, maximum=500),
@@ -185,6 +323,7 @@ def run_search(form: SearchForm) -> dict[str, Any]:
     runtime_facets = dict(config.default_facets)
     location_queries = parse_location_queries(form.location)
     title_keywords = parse_title_keywords(form.title_keywords)
+    active_profile = profile_from_form(form)
 
     location_matches: dict[str, list[FacetOption]] = {}
     for query in location_queries:
@@ -206,6 +345,8 @@ def run_search(form: SearchForm) -> dict[str, Any]:
             "filtered_job_count": 0,
             "browser_filter_applied": False,
             "title_keywords": title_keywords,
+            "active_profile": active_profile,
+            "profile_label": PROFILE_LABELS.get(form.profile_key, form.profile_key),
         }
 
     browser_filters_active = bool(location_queries or title_keywords)
@@ -231,7 +372,7 @@ def run_search(form: SearchForm) -> dict[str, Any]:
         )
         raw_job_count = len(filtered_jobs)
 
-    ranked = KeywordRanker().rank(filtered_jobs)[: form.top]
+    ranked = KeywordRanker(active_profile).rank(filtered_jobs)[: form.top]
     return {
         "config": config,
         "runtime_facets": runtime_facets,
@@ -241,6 +382,8 @@ def run_search(form: SearchForm) -> dict[str, Any]:
         "filtered_job_count": len(filtered_jobs),
         "browser_filter_applied": browser_filters_active,
         "title_keywords": title_keywords,
+        "active_profile": active_profile,
+        "profile_label": PROFILE_LABELS.get(form.profile_key, form.profile_key),
     }
 
 
@@ -297,7 +440,11 @@ PAGE_TEMPLATE = """
       outline: none;
     }
     textarea { min-height: 72px; resize: vertical; }
-    input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255, 138, 61, .12); }
+    .weight-box { min-height: 130px; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: .88rem; }
+    .profile-panel { margin-top: 10px; background: #0a1420; border: 1px solid #26384d; border-radius: 14px; padding: 12px; }
+    .profile-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    @media (max-width: 560px) { .profile-grid { grid-template-columns: 1fr; } }
+    input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255, 138, 61, .12); }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); }
     .actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
@@ -338,7 +485,7 @@ PAGE_TEMPLATE = """
   <main class="page">
     <section class="hero">
       <h1>Grepper Workday Ranker</h1>
-      <p>Search a Workday-powered careers site, resolve tenant-specific location facets, filter title keywords, and rank jobs against the current Chris-tuned profile.</p>
+      <p>Search a Workday-powered careers site, resolve tenant-specific location facets, filter title keywords, and rank jobs against a selected, tunable Profile.</p>
     </section>
 
     <div class="layout">
@@ -362,6 +509,41 @@ PAGE_TEMPLATE = """
         <label for="query">Keyword searchText sent to Workday</label>
         <input id="query" name="query" type="text" value="{{ form.query }}" placeholder="optional: Kubernetes, storage, automation...">
         <div class="hint">This is Workday's broader searchText and may search title, description, team, and other fields.</div>
+
+        <label for="profile_key">Profile preset</label>
+        <select id="profile_key" name="profile_key">
+          {% for key, preset in profile_presets.items() %}
+            <option value="{{ key }}" {% if form.profile_key == key %}selected{% endif %}>{{ preset.label }}</option>
+          {% endfor %}
+        </select>
+        <div class="hint">Choose a preset, then tune the weighted keywords below before ranking.</div>
+
+        <div class="profile-panel">
+          <label for="core_plus_weights">Core weighted keywords</label>
+          <textarea class="weight-box" id="core_plus_weights" name="core_plus_weights" spellcheck="false">{{ form.core_plus_weights }}</textarea>
+
+          <label for="nice_weights">Nice-to-have weighted keywords</label>
+          <textarea class="weight-box" id="nice_weights" name="nice_weights" spellcheck="false">{{ form.nice_weights }}</textarea>
+
+          <label for="light_neg_weights">Light negative weighted keywords</label>
+          <textarea class="weight-box" id="light_neg_weights" name="light_neg_weights" spellcheck="false">{{ form.light_neg_weights }}</textarea>
+
+          <div class="profile-grid">
+            <div>
+              <label for="title_boost">Title boost</label>
+              <input id="title_boost" name="title_boost" type="number" value="{{ form.title_boost }}" min="0" max="10" step="0.05">
+            </div>
+            <div>
+              <label for="length_bonus_cap">Length bonus cap</label>
+              <input id="length_bonus_cap" name="length_bonus_cap" type="number" value="{{ form.length_bonus_cap }}" min="0" max="10" step="0.05">
+            </div>
+            <div>
+              <label for="length_bonus_divisor">Length divisor</label>
+              <input id="length_bonus_divisor" name="length_bonus_divisor" type="number" value="{{ form.length_bonus_divisor }}" min="1" max="100000" step="1">
+            </div>
+          </div>
+          <div class="hint">Use one <code>term = weight</code> per line. Positive values lift jobs; negative values push jobs down.</div>
+        </div>
 
         <div class="row">
           <div>
@@ -408,6 +590,9 @@ PAGE_TEMPLATE = """
           <div class="card summary">
             <strong>Resolved site:</strong>
             <code>{{ result.config.tenant }}/{{ result.config.site }}</code><br>
+            <strong>Profile:</strong>
+            <code>{{ result.profile_label }}</code>
+            <code>{{ result.active_profile.name }}</code><br>
             <strong>Applied facets:</strong>
             <code>{{ result.runtime_facets }}</code>
             {% if result.title_keywords %}
@@ -483,6 +668,31 @@ PAGE_TEMPLATE = """
       </section>
     </div>
   </main>
+
+  <script>
+    const PROFILE_PRESETS = {{ profile_presets | tojson }};
+    const profileSelect = document.getElementById("profile_key");
+
+    function setField(id, value) {
+      const el = document.getElementById(id);
+      if (el) el.value = value;
+    }
+
+    function applySelectedProfilePreset() {
+      const preset = PROFILE_PRESETS[profileSelect.value];
+      if (!preset) return;
+      setField("core_plus_weights", preset.core_plus_weights);
+      setField("nice_weights", preset.nice_weights);
+      setField("light_neg_weights", preset.light_neg_weights);
+      setField("title_boost", preset.title_boost);
+      setField("length_bonus_cap", preset.length_bonus_cap);
+      setField("length_bonus_divisor", preset.length_bonus_divisor);
+    }
+
+    if (profileSelect) {
+      profileSelect.addEventListener("change", applySelectedProfilePreset);
+    }
+  </script>
 </body>
 </html>
 """
@@ -507,6 +717,7 @@ def create_app() -> Flask:
             result=result,
             error=error,
             examples=DEFAULT_EXAMPLES,
+            profile_presets=profile_presets_for_template(),
         )
 
     return app
