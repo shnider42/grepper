@@ -45,6 +45,14 @@ def test_from_public_url_parses_netflix_vanity_site():
     assert config.list_url == "https://netflix.wd1.myworkdayjobs.com/wday/cxs/netflix/Netflix/jobs"
 
 
+def test_from_public_url_parses_borgwarner_vanity_site():
+    config = WorkdaySiteConfig.from_public_url("https://www.borgwarner.com/careers/job-search")
+    assert config.base_url == "https://borgwarner.wd5.myworkdayjobs.com"
+    assert config.tenant == "borgwarner"
+    assert config.site == "BorgWarner_Careers"
+    assert config.list_url == "https://borgwarner.wd5.myworkdayjobs.com/wday/cxs/borgwarner/BorgWarner_Careers/jobs"
+
+
 def test_from_public_url_parses_direct_cxs_endpoint():
     config = WorkdaySiteConfig.from_public_url(
         "https://netflix.wd1.myworkdayjobs.com/wday/cxs/netflix/Netflix/jobs"
