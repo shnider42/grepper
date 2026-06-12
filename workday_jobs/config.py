@@ -14,6 +14,16 @@ _KNOWN_VANITY_WORKDAY_SITES: dict[str, tuple[str, str, str]] = {
         "netflix",
         "Netflix",
     ),
+    "www.borgwarner.com": (
+        "https://borgwarner.wd5.myworkdayjobs.com",
+        "borgwarner",
+        "BorgWarner_Careers",
+    ),
+    "borgwarner.com": (
+        "https://borgwarner.wd5.myworkdayjobs.com",
+        "borgwarner",
+        "BorgWarner_Careers",
+    ),
 }
 
 
@@ -27,6 +37,7 @@ class WorkdaySiteConfig:
         NVIDIA:  base_url=https://nvidia.wd5.myworkdayjobs.com, tenant=nvidia, site=NVIDIAExternalCareerSite
         Fidelity: base_url=https://wd1.myworkdaysite.com, tenant=fmr, site=FidelityCareers
         Netflix: base_url=https://netflix.wd1.myworkdayjobs.com, tenant=netflix, site=Netflix
+        BorgWarner: base_url=https://borgwarner.wd5.myworkdayjobs.com, tenant=borgwarner, site=BorgWarner_Careers
     """
 
     base_url: str
@@ -82,6 +93,7 @@ class WorkdaySiteConfig:
             https://cisco.wd5.myworkdayjobs.com/en-US/Cisco_Careers/details/...
             https://wd1.myworkdaysite.com/en-US/recruiting/fmr/FidelityCareers
             https://explore.jobs.netflix.net/careers
+            https://www.borgwarner.com/careers/job-search
         """
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
