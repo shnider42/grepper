@@ -9,6 +9,28 @@ from typing import Any, Iterable
 from .models import JobPosting, RankedJob
 
 
+def _normalize_term_key(term: str) -> str:
+    """Normalize a profile term so GUI input, JSON profiles, and defaults align.
+
+    The ranker already treats spaces, hyphens, and slashes as equivalent when matching.
+    Normalizing the profile keys up front prevents equivalent terms like
+    ``customer-facing`` and ``customer facing`` from scoring twice.
+    """
+    normalized = term.casefold().strip()
+    normalized = normalized.replace("&", " and ")
+    normalized = re.sub(r"[\s\-/]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _merge_weight(table: dict[str, float], term: str, weight: float) -> None:
+    key = _normalize_term_key(term)
+    if not key:
+        return
+    existing = table.get(key)
+    if existing is None or abs(weight) >= abs(existing):
+        table[key] = weight
+
+
 def _coerce_weight_table(raw: object, field_name: str) -> dict[str, float]:
     if raw is None:
         return {}
@@ -20,11 +42,18 @@ def _coerce_weight_table(raw: object, field_name: str) -> dict[str, float]:
         if not isinstance(term, str) or not term.strip():
             raise ValueError(f"Profile field {field_name!r} contains an invalid term: {term!r}")
         try:
-            table[term.casefold()] = float(weight)
+            _merge_weight(table, term, float(weight))
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 f"Profile field {field_name!r} contains a non-numeric weight for {term!r}: {weight!r}"
             ) from exc
+    return table
+
+
+def _normalize_weight_table(raw: dict[str, float]) -> dict[str, float]:
+    table: dict[str, float] = {}
+    for term, weight in raw.items():
+        _merge_weight(table, term, float(weight))
     return table
 
 
@@ -44,6 +73,11 @@ class Profile:
     title_boost: float = 1.35
     length_bonus_cap: float = 1.25
     length_bonus_divisor: float = 900.0
+
+    def __post_init__(self) -> None:
+        self.core_plus = _normalize_weight_table(self.core_plus)
+        self.nice = _normalize_weight_table(self.nice)
+        self.light_neg = _normalize_weight_table(self.light_neg)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Profile":
@@ -86,7 +120,7 @@ class Profile:
             length_bonus_divisor=self.length_bonus_divisor,
         )
         for term, weight in weights.items():
-            key = term.casefold()
+            key = _normalize_term_key(term)
             if key in profile.core_plus:
                 profile.core_plus[key] = weight
             elif key in profile.nice:
@@ -286,7 +320,7 @@ class KeywordRanker:
 
     @staticmethod
     def _term_pattern(term: str) -> str:
-        escaped = re.escape(term.casefold())
+        escaped = re.escape(_normalize_term_key(term))
         escaped = escaped.replace(r"\ ", r"[\s\-/]+")
         escaped = escaped.replace(r"\/", r"[\s\-/]+")
         escaped = escaped.replace(r"\-", r"[\s\-/]+")
@@ -317,25 +351,27 @@ class KeywordRanker:
         for job in jobs:
             title = self._prep(job.title)
             description = self._prep(job.description_text)
-            both = f"{title}\n{description}"
             score = 0.0
             matches = {"core": [], "nice": [], "neg": []}
 
             sc, hit = self._score_text(title, profile.core_plus, title=True, title_boost=profile.title_boost)
             score += sc
             matches["core"].extend(hit)
-            sc, hit = self._score_text(both, profile.core_plus, title=False, title_boost=profile.title_boost)
+            sc, hit = self._score_text(description, profile.core_plus, title=False, title_boost=profile.title_boost)
             score += sc
             matches["core"].extend(hit)
 
             sc, hit = self._score_text(title, profile.nice, title=True, title_boost=profile.title_boost)
             score += sc
             matches["nice"].extend(hit)
-            sc, hit = self._score_text(both, profile.nice, title=False, title_boost=profile.title_boost)
+            sc, hit = self._score_text(description, profile.nice, title=False, title_boost=profile.title_boost)
             score += sc
             matches["nice"].extend(hit)
 
-            sc, hit = self._score_text(both, profile.light_neg, title=False, title_boost=profile.title_boost)
+            sc, hit = self._score_text(title, profile.light_neg, title=True, title_boost=profile.title_boost)
+            score += sc
+            matches["neg"].extend(hit)
+            sc, hit = self._score_text(description, profile.light_neg, title=False, title_boost=profile.title_boost)
             score += sc
             matches["neg"].extend(hit)
 
