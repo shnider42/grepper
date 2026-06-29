@@ -93,6 +93,21 @@ def test_profile_normalizes_equivalent_term_variants():
     assert ranked[0].matches["core"] == ["customer facing(+2.7)"]
 
 
+def test_profile_normalization_preserves_ampersand_phrase_matching():
+    profile = Profile(
+        name="ampersand-normalization",
+        core_plus={"integration & test": 2.0},
+        title_boost=1.0,
+        length_bonus_cap=0,
+    )
+
+    ranked = KeywordRanker(profile).rank([_job("Integration & Test Engineer")])
+
+    assert profile.core_plus == {"integration and test": 2.0}
+    assert ranked[0].score == 2.0
+    assert ranked[0].matches["core"] == ["integration and test(+2.0)"]
+
+
 def test_title_terms_are_not_scored_again_as_description_terms():
     profile = Profile(
         name="no-title-double-count",
