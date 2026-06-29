@@ -316,7 +316,7 @@ class KeywordRanker:
 
     @staticmethod
     def _prep(text: str | None) -> str:
-        return (text or "").casefold()
+        return (text or "").casefold().replace("&", " and ")
 
     @staticmethod
     def _term_pattern(term: str) -> str:
