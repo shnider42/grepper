@@ -34,7 +34,7 @@ def test_ranker_understands_customer_facing_phrase_variants():
     ranked = KeywordRanker().rank(jobs)
 
     assert ranked[0].score > 5
-    assert any("customer-facing" in hit or "customer facing" in hit for hit in ranked[0].matches["core"])
+    assert any("customer facing" in hit for hit in ranked[0].matches["core"])
 
 
 def test_profile_can_be_loaded_from_json(tmp_path):
@@ -76,3 +76,32 @@ def test_profile_weight_override_can_add_new_negative_term():
     assert ranked[0].job.description_text == "python linux"
     assert ranked[0].score > ranked[1].score
     assert any("cryptocurrency" in hit for hit in ranked[1].matches["neg"])
+
+
+def test_profile_normalizes_equivalent_term_variants():
+    profile = Profile(
+        name="term-normalization",
+        core_plus={"customer-facing": 2.0, "customer facing": 1.0},
+        length_bonus_cap=0,
+    )
+
+    assert profile.core_plus == {"customer facing": 2.0}
+
+    ranked = KeywordRanker(profile).rank([_job("Customer Facing Engineer")])
+
+    assert ranked[0].score == 2.7
+    assert ranked[0].matches["core"] == ["customer facing(+2.7)"]
+
+
+def test_title_terms_are_not_scored_again_as_description_terms():
+    profile = Profile(
+        name="no-title-double-count",
+        core_plus={"python": 2.0},
+        title_boost=2.0,
+        length_bonus_cap=0,
+    )
+
+    ranked = KeywordRanker(profile).rank([_job("Python Engineer")])
+
+    assert ranked[0].score == 4.0
+    assert ranked[0].matches["core"] == ["python(+4.0)"]
